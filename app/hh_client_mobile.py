@@ -261,12 +261,17 @@ class MobileHHClient(HHClient):
         return mobile_web_only.fetch_employer_rating(self.acc, employer_id)
 
     def fetch_employer_id_for_vacancy(self, vacancy_id) -> int | None:
-        """employer_id по вакансии (phase 3, vacancy-метаданные)."""
-        raise NotImplementedError("phase 3: TODO mobile fetch_employer_id_for_vacancy")
+        """employer_id из OAuth GET /vacancies/{id}."""
+        details = oauth.fetch_vacancy_details(self.acc, str(vacancy_id))
+        employer_id = details.get("employer_id") if isinstance(details, dict) else None
+        try:
+            return int(employer_id) if employer_id is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def fetch_vacancy_owner_hr_hhid(self, vacancy_id) -> int | None:
-        """HHID HR-а, владеющего вакансией (phase 3, vacancy-метаданные)."""
-        raise NotImplementedError("phase 3: TODO mobile fetch_vacancy_owner_hr_hhid")
+        """HHID HR-а не публикуется mobile API; fallback идёт в web SSR."""
+        raise NotImplementedError("mobile API does not expose vacancy owner HR hhid")
 
     # ── Phase 4: резюме/статистика (реализовано: api.hh.ru, Bearer) ──────────
     # Делегирование в app/mobile_resume*.py и app/mobile_job_search_status.py;

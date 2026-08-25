@@ -9,6 +9,9 @@ services:
 
   hh-bot:
     build: .
+    # Не запускаем приложение от root: новые data/*.json должны принадлежать
+    # host-пользователю, иначе host backup/restore перестаёт работать.
+    user: "${HH_BOT_UID:-1000}:${HH_BOT_GID:-1000}"
     depends_on:
       - singbox
     ports:

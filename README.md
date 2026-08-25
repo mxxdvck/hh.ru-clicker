@@ -1,9 +1,8 @@
 # HH Bot Dashboard
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-39d0d8?style=flat-square)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-964_total-39d0d8?style=flat-square)](tests/)
-[![Passed](https://img.shields.io/badge/passed-961-3fb950?style=flat-square)](tests/)
-[![Skipped](https://img.shields.io/badge/skipped-3-d29922?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1010_total-39d0d8?style=flat-square)](tests/)
+[![Passed](https://img.shields.io/badge/passed-1010-3fb950?style=flat-square)](tests/)
 [![Clients](https://img.shields.io/badge/HH-web%20%7C%20mobile%20%7C%20auto-b967ff?style=flat-square)](app/hh_client_factory.py)
 [![WebSocket](https://img.shields.io/badge/realtime-WebSocket-00f0ff?style=flat-square)](app/ws_client.py)
 
@@ -85,9 +84,8 @@ python -m pip install -r requirements.txt -r requirements-dev.txt
 pytest -q
 ```
 
-Для этой ревизии: **964 collected**, **961 passed**, **3 skipped**. Один skip
-зависит от доступности Docker, остальные явно помечены в тестах; актуальный итог
-всегда проверяйте локальным `pytest -q`.
+Для этой ревизии: **1010 collected**, **1010 passed**. Актуальный
+итог всегда проверяйте локальным `pytest -q`.
 
 ## Документация
 

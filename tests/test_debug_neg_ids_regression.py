@@ -102,7 +102,7 @@ def test_neg_ids_account_without_mode_auto_uses_web_client(
     """P1-регрессия: типичный существующий аккаунт БЕЗ поля mode + живой
     OAuth-токен. До фикса factory в auto-ветке видела токен и возвращала
     MobileHHClient → NotImplementedError("phase 2") → ok:false.
-    После фикса auto → всегда WebHHClient (Phase 0) → ok:true."""
+    Auto теперь выбирает mobile-first обёртку; web fallback даёт ok:true."""
     monkeypatch.setattr(CONFIG, "default_client_mode", "auto")
     acc = {"name": "a1", "cookies": {}, "resume_hash": "rh1"}  # без "mode"
     fake_state(acc)

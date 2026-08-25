@@ -3,7 +3,7 @@ Per-account mode selector (feat7): "auto" | "web" | "mobile".
 
 Mode сохраняется в accounts.json либо browser_sessions.json (поле "mode")
 и определяет какой HH-клиент использует аккаунт (app.hh_client_factory):
-  - "auto"   → Phase 0: бот сам выбирает (сейчас всегда WebHHClient)
+  - "auto"   → mobile при живом OAuth-токене, иначе web
   - "web"    → WebHHClient (cookies hh.ru)
   - "mobile" → MobileHHClient (OAuth api.hh.ru, Android-приложение)
 

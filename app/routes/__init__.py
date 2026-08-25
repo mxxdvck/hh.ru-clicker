@@ -173,7 +173,6 @@ from app.routes.apply import router as apply_router        # noqa: E402
 from app.routes.settings import router as settings_router  # noqa: E402
 from app.routes.llm import router as llm_router            # noqa: E402
 from app.routes.debug import router as debug_router        # noqa: E402
-from app.routes.mobile_auth import router as mobile_auth_router  # noqa: E402
 from app.routes.ws import router as ws_router              # noqa: E402
 # UI-integrations (прототипы mobile API → REST routes для dashboard)
 from app.routes.hr_activity import router as hr_activity_router            # noqa: E402
@@ -196,7 +195,6 @@ app.include_router(apply_router)
 app.include_router(settings_router)
 app.include_router(llm_router)
 app.include_router(debug_router)
-app.include_router(mobile_auth_router)
 app.include_router(ws_router)
 app.include_router(hr_activity_router)
 app.include_router(preflight_router)

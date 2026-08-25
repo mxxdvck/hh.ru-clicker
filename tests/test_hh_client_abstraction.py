@@ -103,14 +103,13 @@ def test_factory_auto_mode(monkeypatch):
     monkeypatch.setattr(CONFIG, "default_client_mode", "auto")
     acc = {"mode": "auto", "resume_hash": "rh1", "cookies": {}}
 
-    # Решение Phase 0 (docs/PHASE_MATRIX.md): "auto" → всегда WebHHClient,
-    # даже при живом OAuth-токене (mobile-клиент ещё не готов).
+    # Auto выбирает mobile-first обёртку при живом OAuth-токене.
     monkeypatch.setattr(
         oauth,
         "_oauth_tokens",
         {"rh1": {"access_token": "t", "expires_at": time.time() + 3600}},
     )
-    assert isinstance(get_client(acc), WebHHClient)
+    assert isinstance(get_client(acc), FallbackHHClient)
 
     # Токена нет → тоже web
     monkeypatch.setattr(oauth, "_oauth_tokens", {})

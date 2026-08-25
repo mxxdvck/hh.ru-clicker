@@ -18,16 +18,21 @@ def get_client(account: dict) -> HHClient:
     если поля нет — CONFIG.default_client_mode.
     Неизвестный mode трактуется как "web".
 
-    Решение (docs/PHASE_MATRIX.md): "auto" → всегда WebHHClient —
-    mobile-клиент ещё не готов (почти все методы кидают NotImplementedError),
-    поэтому авто-выбор не должен приводить к mobile даже при живом
-    OAuth-токене. Явный mode="mobile" с Phase 2 возвращает
+    "auto" выбирает mobile при живом OAuth-токене для resume_hash,
+    иначе web. Mobile и явный mode="mobile" возвращают
     FallbackHHClient(MobileHHClient, WebHHClient): вызовы идут в
     mobile-flow, а при fallback-статусах (0/401/403/5xx, см.
     app.hh_mobile_transport.is_fallback_status) или NotImplementedError
     (mobile-заглушки "phase N: TODO") прозрачно повторяются через web-flow.
     """
     mode = _normalize_mode(account.get("mode", _MODE_MISSING))
+    if mode == "auto":
+        from app.oauth import get_oauth_status
+        resume_hash = str(account.get("resume_hash") or "").strip()
+        if resume_hash and get_oauth_status(resume_hash).get("has_token"):
+            mode = "mobile"
+        else:
+            mode = "web"
     if mode == "mobile":
         return FallbackHHClient(MobileHHClient(account), WebHHClient(account))
     return WebHHClient(account)

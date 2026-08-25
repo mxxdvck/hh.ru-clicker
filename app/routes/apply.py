@@ -15,7 +15,7 @@ from app.storage import add_applied
 from app.hh_api import get_headers
 from app.hh_client_factory import get_client
 from app.hh_client_fallback import FallbackHHClient
-from app.questionnaire import get_questionnaire_answer
+from app.questionnaire import get_questionnaire_answer, _parse_questionnaire_rich
 from app.instances import bot
 from app.user_agent import webview_user_agent
 from app.hh_apply import _aio_egress_kwargs
@@ -45,85 +45,35 @@ async def _fetch_questionnaire_data(acc: dict, vid: str) -> dict:
     hidden = dict(re.findall(r'<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"', html))
     hidden.update(dict(re.findall(r'<input[^>]+name="([^"]+)"[^>]+type="hidden"[^>]+value="([^"]*)"', html)))
 
-    q_blocks = re.findall(
-        r'data-qa="task-question">(.*?)(?=data-qa="task-question"|</(?:div|section|form)>)',
-        html, re.DOTALL
-    )
-    q_texts = []
-    for b in q_blocks:
-        c = re.sub(r'<[^>]+>', ' ', b)
-        c = re.sub(r'&quot;', '"', re.sub(r'&ndash;', '–', re.sub(r'&nbsp;', ' ', c)))
-        c = re.sub(r'\s+', ' ', c).strip()
-        q_texts.append(c)
-
-    questions = []
-    q_idx = 0
-
-    for name in re.findall(r'<textarea[^>]+name="(task_\d+_text)"', html):
-        q_text = q_texts[q_idx] if q_idx < len(q_texts) else ""
-        suggested = get_questionnaire_answer(q_text)
-        questions.append({"field": name, "type": "textarea", "text": q_text,
-                          "options": [], "suggested": suggested})
-        q_idx += 1
-
-    radio_groups: dict = {}
-    radio_order: list = []
-    for inp in re.findall(r'<input[^>]+type="radio"[^>]+>', html, re.I):
-        nm = re.search(r'name="([^"]+)"', inp)
-        vl = re.search(r'value="([^"]+)"', inp)
-        if nm and vl and re.match(r'task_\d+', nm.group(1)):
-            n, v = nm.group(1), vl.group(1)
-            if n not in radio_groups:
-                radio_groups[n] = []
-                radio_order.append(n)
-            radio_groups[n].append(v)
-
-    label_map: dict = {}
-    for inp_with_id in re.findall(r'<input[^>]+type="radio"[^>]+id="([^"]+)"[^>]*>', html, re.I):
-        label_m = re.search(rf'<label[^>]+for="{re.escape(inp_with_id)}"[^>]*>(.*?)</label>', html, re.DOTALL)
-        if label_m:
-            lbl = re.sub(r'<[^>]+>', '', label_m.group(1)).strip()
-            label_map[inp_with_id] = lbl
-    default_labels = ["да", "нет"]
-
-    for name in radio_order:
-        vals = radio_groups[name]
-        q_text = q_texts[q_idx] if q_idx < len(q_texts) else ""
-        options = []
-        for i, v in enumerate(vals):
-            lbl = label_map.get(v, default_labels[i] if i < len(default_labels) else v)
-            options.append({"value": v, "label": lbl})
-        if not vals:
-            q_idx += 1
-            continue
-        tmpl = get_questionnaire_answer(q_text).lower()
-        chosen = vals[0]
-        if any(w in tmpl for w in ("нет", "no", "не готов", "не готова", "не могу")):
-            chosen = vals[1] if len(vals) > 1 else vals[0]
-        questions.append({"field": name, "type": "radio", "text": q_text,
-                          "options": options, "suggested": chosen})
-        q_idx += 1
-
-    checkbox_groups: dict = {}
-    checkbox_order: list = []
-    for inp in re.findall(r'<input[^>]+type="checkbox"[^>]+>', html, re.I):
-        nm = re.search(r'name="([^"]+)"', inp)
-        vl = re.search(r'value="([^"]+)"', inp)
-        if nm and vl and re.match(r'task_\d+', nm.group(1)):
-            n, v = nm.group(1), vl.group(1)
-            if n not in checkbox_groups:
-                checkbox_groups[n] = []
-                checkbox_order.append(n)
-            checkbox_groups[n].append(v)
-    for name in checkbox_order:
-        if name in radio_groups:
-            continue
-        vals = checkbox_groups[name]
-        q_text = q_texts[q_idx] if q_idx < len(q_texts) else ""
-        q_idx += 1
-        options = [{"value": v, "label": v} for v in vals]
-        questions.append({"field": name, "type": "checkbox", "text": q_text,
-                          "options": options, "suggested": vals[0] if vals else ""})
+    # Reuse the canonical BeautifulSoup parser.  The former route-local regex
+    # parser had drifted: radio labels were looked up by value instead of id,
+    # and select fields were silently omitted.
+    questions = _parse_questionnaire_rich(html)
+    negative_words = ("нет", "no", "не готов", "не готова", "не могу")
+    for question in questions:
+        answer = get_questionnaire_answer(question.get("text", ""))
+        options = question.get("options") or []
+        qtype = question.get("type")
+        if qtype == "textarea":
+            question["suggested"] = answer
+        elif qtype == "radio":
+            values = [option["value"] for option in options]
+            chosen = values[0] if values else ""
+            if any(word in answer.lower() for word in negative_words) and len(values) > 1:
+                chosen = values[1]
+            question["suggested"] = chosen
+        elif qtype == "checkbox":
+            # A checkbox group is multi-valued all the way through the UI and
+            # multipart encoder.  Default conservatively to its first option.
+            question["suggested"] = [options[0]["value"]] if options else []
+        elif qtype == "select":
+            chosen = options[0]["value"] if options else ""
+            answer_lower = answer.lower()
+            for option in options:
+                if option.get("label", "").lower() in answer_lower:
+                    chosen = option["value"]
+                    break
+            question["suggested"] = chosen
 
     return {"questions": questions, "hidden": hidden, "url_form": url_form}
 
@@ -331,7 +281,13 @@ async def api_apply_submit(body: dict):
                 if name in hidden:
                     form.add_field(name, hidden[name])
             for name, value in user_answers.items():
-                form.add_field(name, str(value))
+                # HH checkbox groups expect repeated fields, not a Python-list
+                # string such as "['a', 'b']".
+                if isinstance(value, list):
+                    for item in value:
+                        form.add_field(name, str(item))
+                else:
+                    form.add_field(name, str(value))
 
             async with session.post(
                 url_form,

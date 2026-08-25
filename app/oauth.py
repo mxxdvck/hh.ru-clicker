@@ -852,8 +852,9 @@ _vacancy_details_lock = threading.Lock()
 
 def fetch_vacancy_details(acc: dict, vid: str) -> dict:
     """GET /vacancies/{vid} via OAuth — full vacancy fields beyond search.
-    Returns {auto_response, quick_responses_allowed, accredited_it_employer,
-    key_skills:[name], work_format:[id], languages:[id]}. Cached 6h.
+    Returns {employer_id, auto_response, quick_responses_allowed,
+    accredited_it_employer, key_skills:[name], work_format:[id],
+    languages:[id]}. Cached 6h.
     {} on transient error → retried next call."""
     if not vid:
         return {}
@@ -880,7 +881,13 @@ def fetch_vacancy_details(acc: dict, vid: str) -> dict:
             return {}
         d = r.json()
         emp = d.get("employer") or {}
+        employer_id = emp.get("id")
+        try:
+            employer_id = int(employer_id) if employer_id is not None else None
+        except (TypeError, ValueError):
+            employer_id = None
         info = {
+            "employer_id": employer_id,
             "auto_response": bool(d.get("auto_response")),
             "quick_responses_allowed": bool(d.get("quick_responses_allowed")),
             "accredited_it_employer": bool(emp.get("accredited_it_employer")),

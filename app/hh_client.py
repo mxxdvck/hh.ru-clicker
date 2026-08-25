@@ -40,9 +40,9 @@ HHClient не гарантировал вызываемость методов):
 
 Выбор реализации: app/hh_client_factory.py::get_client(acc) — по полю
 acc["mode"] ("web" | "mobile" | "auto"; при отсутствии берётся
-CONFIG.default_client_mode). Решение Phase 0 (подтверждено в Phase 2):
-"auto" → всегда web; mobile — только при явном mode="mobile" (с Phase 2 —
-FallbackHHClient поверх MobileHHClient с auto-fallback на web-flow);
+CONFIG.default_client_mode). "auto" выбирает mobile-first при живом
+OAuth-токене, иначе web; явный mode="mobile" всегда возвращает
+FallbackHHClient поверх MobileHHClient с auto-fallback на web-flow;
 подробнее docs/PHASE_MATRIX.md.
 
 ВАЖНО: НЕ путать с app.hh_http.HHClient — там класс с тем же именем, но это

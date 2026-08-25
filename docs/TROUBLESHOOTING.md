@@ -293,3 +293,16 @@ DDoS-Guard перед HH фингерпринтит клиента по JA3/JA4 
   - **#19** — подтверждён `a2f6890` (deadlock invalidate ↔ save, регресс-тест).
   - **#20** — четыре блокер-фикса `decaeaf`/`41656cc`/`890a98d`/`1155390`; полные детали issue недоступны, поведение восстановлено по диффам.
 - Ветки `pr-11`, `pr-12`, `aaaa` — к troubleshooting-тематике отношения не имеют.
+### Docker создал `data/*.json` от root
+
+Если host-скрипт бэкапа получает `Permission denied`, один раз верните
+владельца каталогу данных и пересоберите сервис:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" /home/user/clicker/hh.ru-clicker/data
+docker compose up -d --build
+```
+
+`docker-compose.yml` запускает `hh-bot` от `${HH_BOT_UID:-1000}:${HH_BOT_GID:-1000}`,
+поэтому после этой одноразовой миграции новые JSON больше не будут
+создаваться от root.

@@ -1,5 +1,6 @@
 # Данные пользователя
 data/
+backups/
 .env
 .env.local
 

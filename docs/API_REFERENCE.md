@@ -421,7 +421,7 @@ def fetch_employer_id_for_vacancy(self, vacancy_id) -> int | None
 `employer_id` по вакансии (SSR страницы вакансии, кэш 7 дней). Возврат:
 `int | None` (None если страница недоступна/вакансия снята).
 
-Mobile: 🔜 phase 2. `GET /vacancies/{id}` (гр.2) — поле `employer.id` прямо
+Mobile: ✅ `GET /vacancies/{id}` (гр.2) — поле `employer.id` прямо
 в карточке вакансии:
 
 ```json

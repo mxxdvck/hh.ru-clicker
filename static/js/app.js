@@ -5126,7 +5126,9 @@ function applyShowResult(msg, type) {
   if (!el) return;
   el.style.display = '';
   el.className = 'apply-result ' + type;
-  el.innerHTML = msg;
+  // Messages can contain raw HH response text or exception strings.
+  // Treat them as text so a remote error cannot inject dashboard markup.
+  el.textContent = msg;
 }
 
 function applyHideQuestionnaire() {
@@ -5168,7 +5170,7 @@ async function applyCheck() {
     } else if (data.status === 'test_required') {
       ApplyState.questions = data.questions || [];
       applyShowResult(
-        `📝 <b>${data.message}</b><br>Проверьте ответы ниже и нажмите «Откликнуться»`,
+        `📝 ${data.message}\nПроверьте ответы ниже и нажмите «Откликнуться»`,
         'info'
       );
       applyRenderQuestionnaire(data);
@@ -5215,6 +5217,24 @@ function applyRenderQuestionnaire(data) {
         </label>`;
       });
       html += `</div>`;
+    } else if (q.type === 'checkbox') {
+      const suggested = Array.isArray(q.suggested) ? q.suggested : [q.suggested];
+      html += `<div class="apply-radio-opts">`;
+      q.options.forEach(opt => {
+        const checked = suggested.includes(opt.value) ? 'checked' : '';
+        html += `<label class="apply-radio-opt">
+          <input type="checkbox" name="aq_${fieldAttr}" value="${esc(opt.value)}" ${checked}>
+          ${esc(opt.label)}
+        </label>`;
+      });
+      html += `</div>`;
+    } else if (q.type === 'select') {
+      html += `<select class="apply-q-answer" id="aq_${fieldAttr}">`;
+      q.options.forEach(opt => {
+        const selected = opt.value === q.suggested ? 'selected' : '';
+        html += `<option value="${esc(opt.value)}" ${selected}>${esc(opt.label)}</option>`;
+      });
+      html += `</select>`;
     } else if (q.type === 'textarea') {
       html += `<textarea class="apply-q-answer" id="aq_${fieldAttr}" rows="3">${esc(q.suggested)}</textarea>`;
     }
@@ -5248,6 +5268,13 @@ async function applySubmit() {
     if (q.type === 'radio') {
       const checked = document.querySelector(`input[name="aq_${q.field}"]:checked`);
       if (checked) answers[q.field] = checked.value;
+    } else if (q.type === 'checkbox') {
+      answers[q.field] = Array.from(
+        document.querySelectorAll(`input[name="aq_${q.field}"]:checked`)
+      ).map(input => input.value);
+    } else if (q.type === 'select') {
+      const select = document.getElementById('aq_' + q.field);
+      if (select) answers[q.field] = select.value;
     } else if (q.type === 'textarea') {
       const ta = document.getElementById('aq_' + q.field);
       if (ta) answers[q.field] = ta.value;

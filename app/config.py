@@ -27,10 +27,7 @@ CONFIG.default_client_mode (дефолт "web").
                 существующий web-flow.
    - "mobile" → MobileHHClient (app/hh_client_mobile.py): OAuth Bearer
                 через api.hh.ru.
-   - "auto"   → Phase 0: ВСЕГДА web (mobile-skeleton не готов:
-                fetch_negotiations и др. кидают NotImplementedError "phase 2");
-                mobile — только при явном "mobile". С Phase 2 auto станет
-                mobile при живом OAuth-токене (см. docs/PHASE_MATRIX.md).
+   - "auto"   → mobile при живом OAuth-токене, иначе web.
 
 Выбор клиента по полю `mode` делает app/hh_client_factory.py::get_client(account).
 """
@@ -88,8 +85,7 @@ class Config:
     use_oauth_apply: bool = False  # Использовать OAuth API для откликов (вместо web cookies)
     auto_pick_resume: bool = True  # Выбирать наиболее подходящее резюме для mobile-отклика
     # Режим HH-клиента по умолчанию для аккаунтов без поля "mode" ("web" | "mobile" | "auto").
-    # Phase 0: mobile-skeleton не готов, поэтому дефолт "web", а "auto" резолвится
-    # в web до Phase 2; mobile выбирается только явным mode аккаунта.
+    # Auto выбирает mobile только при живом OAuth-токене.
     default_client_mode: str = "web"
     # WebSocket realtime updates от chatik.hh.ru (Phase 1). Off by default —
     # legacy polling loop продолжает работать. Включать per-account через /api/ws/{idx}/enable.
@@ -272,6 +268,37 @@ _CONFIG_KEYS = [
 ]
 
 
+def _coerce_config_value(key: str, value):
+    """Coerce a persisted value without Python's ``bool('false')`` trap."""
+    current = getattr(CONFIG, key)
+    expected = type(current)
+    if expected is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("true", "1", "yes", "on"):
+                return True
+            if normalized in ("false", "0", "no", "off"):
+                return False
+        raise ValueError(f"{key} expects bool")
+    if expected in (int, float):
+        if isinstance(value, bool):
+            raise ValueError(f"{key} expects {expected.__name__}")
+        return expected(value)
+    if expected is str:
+        return str(value)
+    if expected in (list, dict):
+        if not isinstance(value, expected):
+            raise ValueError(f"{key} expects {expected.__name__}")
+        return value
+    if not isinstance(value, expected):
+        raise ValueError(f"{key} expects {expected.__name__}")
+    return value
+
+
 def hh_base() -> str:
     """Базовый URL HH с учётом регионального поддомена.
     Пусто → https://hh.ru. С регионом «syktyvkar» → https://syktyvkar.hh.ru.
@@ -369,9 +396,8 @@ def load_config():
             data = json.load(f)
         for k in _CONFIG_KEYS:
             if k in data:
-                old_val = getattr(CONFIG, k)
                 try:
-                    setattr(CONFIG, k, type(old_val)(data[k]))
+                    setattr(CONFIG, k, _coerce_config_value(k, data[k]))
                 except (ValueError, TypeError):
                     log_debug(f"⚠️ Невалидное значение конфига {k}={data[k]!r}, пропуск")
         if "questionnaire_templates" in data and isinstance(data["questionnaire_templates"], list):
@@ -388,7 +414,10 @@ def load_config():
                 setattr(CONFIG, k, data[k])
         for k in ("llm_enabled", "llm_auto_send", "llm_use_cover_letter", "llm_use_resume", "llm_fill_questionnaire"):
             if k in data:
-                setattr(CONFIG, k, bool(data[k]))
+                try:
+                    setattr(CONFIG, k, _coerce_config_value(k, data[k]))
+                except (ValueError, TypeError):
+                    log_debug(f"⚠️ Невалидное boolean-значение {k}={data[k]!r}, пропуск")
         if "allowed_schedules" in data and isinstance(data["allowed_schedules"], list):
             CONFIG.allowed_schedules = data["allowed_schedules"]
         if "title_include_keywords" in data and isinstance(data["title_include_keywords"], list):
@@ -396,9 +425,15 @@ def load_config():
         if "title_exclude_keywords" in data and isinstance(data["title_exclude_keywords"], list):
             CONFIG.title_exclude_keywords = data["title_exclude_keywords"]
         if "auto_apply_tests" in data:
-            CONFIG.auto_apply_tests = bool(data["auto_apply_tests"])
+            try:
+                CONFIG.auto_apply_tests = _coerce_config_value("auto_apply_tests", data["auto_apply_tests"])
+            except (ValueError, TypeError):
+                log_debug(f"⚠️ Невалидное boolean-значение auto_apply_tests={data['auto_apply_tests']!r}, пропуск")
         if "use_oauth_apply" in data:
-            CONFIG.use_oauth_apply = bool(data["use_oauth_apply"])
+            try:
+                CONFIG.use_oauth_apply = _coerce_config_value("use_oauth_apply", data["use_oauth_apply"])
+            except (ValueError, TypeError):
+                log_debug(f"⚠️ Невалидное boolean-значение use_oauth_apply={data['use_oauth_apply']!r}, пропуск")
         if "default_client_mode" in data:
             _mode = str(data["default_client_mode"]).strip().lower()
             # Мусорное значение → "web" (не "auto": с Phase 2 auto сможет выбирать mobile).
@@ -408,7 +443,14 @@ def load_config():
         if "llm_profile_mode" in data and isinstance(data["llm_profile_mode"], str):
             CONFIG.llm_profile_mode = data["llm_profile_mode"]
         if "llm_openclaw_enabled" in data:
-            CONFIG.llm_openclaw_enabled = bool(data["llm_openclaw_enabled"])
+            try:
+                CONFIG.llm_openclaw_enabled = _coerce_config_value(
+                    "llm_openclaw_enabled", data["llm_openclaw_enabled"])
+            except (ValueError, TypeError):
+                log_debug(
+                    f"⚠️ Невалидное boolean-значение "
+                    f"llm_openclaw_enabled={data['llm_openclaw_enabled']!r}, пропуск"
+                )
         if "llm_openclaw_agent" in data and isinstance(data["llm_openclaw_agent"], str):
             CONFIG.llm_openclaw_agent = data["llm_openclaw_agent"]
         if "llm_openclaw_model" in data and isinstance(data["llm_openclaw_model"], str):

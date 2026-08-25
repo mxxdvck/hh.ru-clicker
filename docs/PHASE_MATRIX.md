@@ -87,8 +87,8 @@ Phase/backend» и фиксирует нумерацию фаз, которой 
 | `auto_decline_discards` | 2 | делегат | заглушка phase 2 (decline есть только в web-flow; `FallbackHHClient` прозрачно повторяет через web) | `routes/accounts.py:1120` — через `get_client` с Phase 3.5 |
 | `fetch_negotiations_metadata` | 2 | делегат | да (Phase 2: `mobile_neg_meta`, `GET api.hh.ru/negotiations` → topics_by_vid; politeness/activity — только web-SSR) | `routes/accounts.py:182` — через `get_client` с Phase 3.5 |
 | `fetch_employer_rating` | **3** ¹ | делегат | заглушка phase 3 | `routes/accounts.py:187`, `219` — через `get_client` с Phase 3.5 |
-| `fetch_employer_id_for_vacancy` | **3** ¹ | делегат | заглушка phase 3 | `routes/accounts.py:180` — через `get_client` с Phase 3.5 |
-| `fetch_vacancy_owner_hr_hhid` | **3** ¹ | делегат | заглушка phase 3 | `routes/accounts.py:181` — через `get_client` с Phase 3.5 |
+| `fetch_employer_id_for_vacancy` | **3** ¹ | делегат | да (`GET /vacancies/{id}` → `employer.id`) | `routes/accounts.py:180` — через `get_client` с Phase 3.5 |
+| `fetch_vacancy_owner_hr_hhid` | **3** ¹ | делегат | web fallback (mobile API не отдаёт owner HR hhid) | `routes/accounts.py:181` — через `get_client` с Phase 3.5 |
 
 ¹ Целевая классификация по замечанию review: рейтинг работодателя,
 `employer_id` и HR-владелец вакансии — это vacancy/apply-метаданные,
@@ -314,7 +314,7 @@ vacancy-метаданные». Доменное группирование в `
 |---|---|
 | `"web"` | всегда `WebHHClient` (cookies hh.ru / chatik.hh.ru) |
 | `"mobile"` | с Phase 2 — `FallbackHHClient(MobileHHClient, WebHHClient)` (`app/hh_client_fallback.py`): вызовы идут в mobile-flow (OAuth Bearer api.hh.ru), а при fallback-статусах (0/401/403/5xx, см. `app.hh_mobile_transport.is_fallback_status`) или `NotImplementedError` (напр. `auto_decline_discards`) прозрачно повторяются через web-flow |
-| `"auto"` | **целевое состояние: `WebHHClient`** — авто-выбор не приводит к mobile; mobile включается осознанно явным `mode="mobile"` |
+| `"auto"` | `FallbackHHClient(MobileHHClient, WebHHClient)` при живом OAuth-токене; иначе `WebHHClient` |
 
 **Решение (Phase 0, подтверждено в Phase 2):** `auto` → `web`; mobile-клиент
 выбирается **только** при явном `mode="mobile"`. С Phase 2 явный mobile
