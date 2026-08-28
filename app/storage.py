@@ -483,6 +483,7 @@ def save_browser_sessions(sessions: list, *, wait: bool = False):
     Fix: монотонный seq в момент захвата pending_lock; writer сравнивает.
     """
     global _sessions_pending_snapshot, _sessions_pending_seq
+    target_file = SESSIONS_FILE
     snapshot = [_strip_sensitive_session_fields(copy.deepcopy(s)) for s in sessions]
     with _sessions_pending_lock:
         # Каждый новый вызов получает свежий seq. deepcopy сделан выше
@@ -505,8 +506,8 @@ def save_browser_sessions(sessions: list, *, wait: bool = False):
                     # параллельный save с меньшим seq не мог его откатить.
                     pending_seq = seq
                 try:
-                    _atomic_write_json(SESSIONS_FILE, pending)
-                    _restrict_perms(SESSIONS_FILE)
+                    _atomic_write_json(target_file, pending)
+                    _restrict_perms(target_file)
                     with _sessions_pending_lock:
                         if pending_seq > _sessions_written_seq:
                             _sessions_written_seq = pending_seq

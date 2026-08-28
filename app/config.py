@@ -358,6 +358,7 @@ def save_config():
     """Сохранить текущий CONFIG на диск."""
     global _url_pages_map_cache, _url_pool_version
     data = config_snapshot()
+    target_file = CONFIG_FILE
     _url_pool_version += 1
     _url_pages_map_cache = None
     def _write():
@@ -365,19 +366,19 @@ def save_config():
             # Mobile OTP settings live in the same config.json under a namespaced
             # object. Preserve them when the legacy bot Config is saved.
             try:
-                existing = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
+                existing = json.loads(target_file.read_text(encoding="utf-8")) if target_file.exists() else {}
                 if isinstance(existing, dict) and isinstance(existing.get("mobile_auth"), dict):
                     data["mobile_auth"] = existing["mobile_auth"]
             except (OSError, json.JSONDecodeError):
                 pass
-            tmp = CONFIG_FILE.with_suffix(".tmp")
+            tmp = target_file.with_suffix(".tmp")
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-                tmp.replace(CONFIG_FILE)
+                tmp.replace(target_file)
                 try:
                     import os as _os
-                    _os.chmod(CONFIG_FILE, 0o600)  # PII (phone, telegram в letter_templates)
+                    _os.chmod(target_file, 0o600)  # PII (phone, telegram в letter_templates)
                 except Exception:
                     pass
             except Exception as e:
@@ -474,16 +475,17 @@ def save_accounts():
         {k: v for k, v in acc.items() if not k.startswith("_")}
         for acc in accounts_data
     ]
+    target_file = ACCOUNTS_FILE
     def _write():
         with _accounts_write_lock:
-            tmp = ACCOUNTS_FILE.with_suffix(".tmp")
+            tmp = target_file.with_suffix(".tmp")
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(snapshot, f, ensure_ascii=False, indent=2, default=str)
-                tmp.replace(ACCOUNTS_FILE)
+                tmp.replace(target_file)
                 try:
                     import os as _os
-                    _os.chmod(ACCOUNTS_FILE, 0o600)  # cookies — owner-only
+                    _os.chmod(target_file, 0o600)  # cookies — owner-only
                 except Exception:
                     pass
             except Exception as e:

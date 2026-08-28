@@ -37,6 +37,13 @@ def tmp_data_dir(tmp_path, monkeypatch):
                     monkeypatch.setattr(_storage, name, data_dir / orig.name, raising=False)
     except ImportError:
         pass
+    # routes/settings.py импортирует DATA_DIR по значению; без отдельного
+    # патча destructive backup-wipe тест удалит настоящий data/*.json.
+    try:
+        from app.routes import settings as _settings
+        monkeypatch.setattr(_settings, "DATA_DIR", data_dir, raising=False)
+    except ImportError:
+        pass
     # config.py и logging_utils тоже используют Path("data") напрямую.
     try:
         from app import config as _config
@@ -57,3 +64,10 @@ def tmp_data_dir(tmp_path, monkeypatch):
     except ImportError:
         pass
     yield data_dir
+    # Дождаться всех scheduled writes ДО того, как monkeypatch вернёт реальные
+    # пути. Иначе callback следующего тика может попасть в production data/.
+    try:
+        from app.storage import _save_executor
+        _save_executor.submit(lambda: None).result(timeout=10)
+    except Exception:
+        pass
