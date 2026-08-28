@@ -142,7 +142,7 @@ def test_async_mobile_success_returns_mobile_result_web_untouched():
 # ── Делегирование: fallback-статусы → повтор через web ──────────────────────
 
 
-@pytest.mark.parametrize("status", [0, 401, 403, 500, 502, 599])
+@pytest.mark.parametrize("status", [401, 403])
 def test_fallback_statuses_retry_web(status):
     def boom(*args, **kwargs):
         raise MobileAPIError(status, payload="err", url="/m")
@@ -154,14 +154,16 @@ def test_fallback_statuses_retry_web(status):
     assert web.calls == [("send_message", ("neg1", "hi"), {})]
 
 
-def test_kwargs_forwarded_to_web_on_fallback():
+@pytest.mark.parametrize("status", [0, 500, 502, 599])
+def test_mutation_ambiguous_failure_is_not_retried(status):
     def boom(*args, **kwargs):
-        raise MobileAPIError(500, url="/m")
+        raise MobileAPIError(status, url="/m")
 
     client, _, web = _client(mobile_behaviors={"send_message": boom})
 
-    client.send_message("neg1", "hi", topic_id="t7")
-    assert web.calls == [("send_message", ("neg1", "hi"), {"topic_id": "t7"})]
+    with pytest.raises(MobileAPIError):
+        client.send_message("neg1", "hi", topic_id="t7")
+    assert not web.calls
 
 
 def test_async_fallback_status_retries_web():

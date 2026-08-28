@@ -54,7 +54,7 @@ async def _chat_id(idx: int, client) -> str:
     return chat_id or await _start(idx, client)
 
 
-@router.get("/api/account/{idx}/hedi/start")
+@router.post("/api/account/{idx}/hedi/start")
 async def api_hedi_start(idx: int):
     chat_id = await _start(idx)
     return {"ok": True, "chat_id": chat_id}
@@ -65,7 +65,10 @@ async def api_hedi_history(idx: int, limit: int = 50):
     if not 1 <= limit <= 100:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
     client = _mobile_client(idx)
-    chat_id = await _chat_id(idx, client)
+    with _chat_ids_lock:
+        chat_id = _chat_ids.get(idx)
+    if not chat_id:
+        raise HTTPException(status_code=409, detail="hedi chat is not started")
     thread = await asyncio.to_thread(client.fetch_thread, chat_id)
     if not isinstance(thread, dict):
         thread = {"messages": []}

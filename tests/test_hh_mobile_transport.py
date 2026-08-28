@@ -106,3 +106,15 @@ def test_is_fallback_status():
     assert not is_fallback_status(400)
     assert not is_fallback_status(404)
     assert not is_fallback_status(409)
+
+
+@responses.activate
+def test_401_invalidates_cached_token(monkeypatch):
+    invalidated = []
+    monkeypatch.setattr(oauth, "_obtain_oauth_token", lambda a: "old")
+    monkeypatch.setattr(oauth, "invalidate_oauth_token", lambda rh, acc: invalidated.append((rh, acc)))
+    responses.add(responses.GET, MOBILE_BASE + "/chats", json={"error": "invalid_token"}, status=401)
+    with pytest.raises(MobileAPIError) as error:
+        mobile_request(ACC, "GET", "/chats")
+    assert error.value.status_code == 401
+    assert invalidated == [("rh1", ACC)]

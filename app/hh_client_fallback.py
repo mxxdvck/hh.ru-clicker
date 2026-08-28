@@ -87,6 +87,15 @@ _METHODS = (
     "fetch_counters",
 )
 
+# После timeout/5xx сервер мог уже применить POST/PUT, хотя ответ потерялся.
+# Повтор через другой транспорт создаёт второй отклик/сообщение. Fallback для
+# таких методов допустим лишь при явном отказе авторизации (401/403).
+_MUTATING_METHODS = {
+    "send_message", "send_workflow_event", "send_participant_action",
+    "mark_chat_read", "auto_decline_discards", "submit_response",
+    "touch_resume", "edit_resume_field", "set_job_search_status",
+}
+
 assert set(_METHODS) == set(HHClient.__abstractmethods__), (
     "FallbackHHClient._METHODS разошёлся с контрактом HHClient: "
     f"лишние={set(_METHODS) - set(HHClient.__abstractmethods__)}, "
@@ -106,6 +115,8 @@ def _make_sync_delegate(name: str):
             return getattr(self.web, name)(*args, **kwargs)
         except MobileAPIError as e:
             if not is_fallback_status(e.status_code):
+                raise
+            if name in _MUTATING_METHODS and (e.status_code == 0 or e.status_code >= 500):
                 raise
             log_debug(
                 f"FallbackHHClient.{name}: mobile HTTP {e.status_code} — "

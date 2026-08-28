@@ -264,10 +264,9 @@ def test_client_delegate_positional_limit(oauth_token):
 
     result = MobileHHClient(ACC).fetch_resume_view_history(100)  # позиционно!
 
-    assert isinstance(result, dict)
-    assert len(result["items"]) == 1
-    assert result["items"][0]["employer_id"] == "11583314"
-    assert result["total"] == 1
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["employer_id"] == "11583314"
     assert _query(responses.calls[0].request).get("per_page") == "100"
     _assert_bearer(responses.calls[0].request)
 
@@ -284,9 +283,9 @@ def test_client_delegate_keyword_resume_id(oauth_token):
     result = MobileHHClient(ACC).fetch_resume_view_history(limit=5,
                                                            resume_id="rhX")
 
-    assert isinstance(result, dict) and result["items"]
-    assert result["items"][0]["name"] == "Омега"
-    assert result["items"][0]["viewed"] is True
+    assert isinstance(result, list) and result
+    assert result[0]["name"] == "Омега"
+    assert result[0]["viewed"] is True
     req = responses.calls[0].request
     assert req.url.split("?")[0] == MOBILE_BASE + "/resumes/rhX/views"
     assert _query(req).get("per_page") == "5"

@@ -86,21 +86,21 @@ def mobile_request(acc: dict, method: str, path: str, *, params=None,
     url = path if str(path).startswith("http") else MOBILE_BASE + path
     token = oauth._obtain_oauth_token(acc)
     if not token:
-        # Нет токена == нет авторизации → последствия как у HTTP 401:
-        # фабрике есть смысл повторить через web-flow.
         raise MobileAPIError(401, payload="no_oauth_token", url=url)
     try:
         r = requests.request(
-            method, url,
-            params=params, json=json_body, data=form,
-            headers=mobile_headers(acc, token),
-            # split-egress: api.hh.ru тоже обязан идти через HH_PROXY.
-            proxies=egress_proxies(),
+            method, url, params=params, json=json_body, data=form,
+            headers=mobile_headers(acc, token), proxies=egress_proxies(),
             timeout=timeout,
         )
     except requests.RequestException as e:
         log_debug(f"mobile_request {method} {url}: network error {e}")
         raise MobileAPIError(0, payload=str(e), url=url)
+    if r.status_code == 401:
+        # HH может отозвать access token раньше локального expires_at. Не
+        # повторяем здесь POST/PUT: следующий вызов получит свежий token, а
+        # текущая операция уйдёт в штатную fallback-политику.
+        oauth.invalidate_oauth_token(acc.get("resume_hash", ""), acc)
     if not (200 <= r.status_code < 300):
         try:
             payload = r.json()

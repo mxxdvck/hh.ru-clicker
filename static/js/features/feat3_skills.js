@@ -41,8 +41,13 @@
       html += '<div class="feat3-line"><span class="feat3-label feat3-dim">Уже есть в профиле:</span> ' +
         chipsHTML(have, 'feat3-chip-have') + '</div>';
     }
-    if (data.editor_url) {
-      html += '<div class="feat3-line"><a class="feat3-editor-btn" href="' + escFn(data.editor_url) +
+    let editorUrl = '';
+    try {
+      const parsed = new URL(String(data.editor_url || ''), window.location.origin);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') editorUrl = parsed.href;
+    } catch (_) { /* небезопасная/битая ссылка не отображается */ }
+    if (editorUrl) {
+      html += '<div class="feat3-line"><a class="feat3-editor-btn" href="' + escFn(editorUrl) +
         '" target="_blank" rel="noopener">📝 Открыть редактор резюме</a></div>';
     }
     box.innerHTML = html;

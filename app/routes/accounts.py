@@ -600,9 +600,10 @@ async def api_resume_views(idx: int):
         client = get_client(s.acc)  # до executor: выбор клиента синхронный
         if not s.resume_view_history:
             loop = asyncio.get_event_loop()
-            s.resume_view_history = await loop.run_in_executor(
+            history = await loop.run_in_executor(
                 None, client.fetch_resume_view_history, 100
             )
+            s.resume_view_history = history.get("items", []) if isinstance(history, dict) else history
         if not s.resume_views_7d:
             loop = asyncio.get_event_loop()
             rs = await loop.run_in_executor(None, client.fetch_stats)

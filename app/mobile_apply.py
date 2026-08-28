@@ -188,10 +188,11 @@ def submit_response(acc: dict, vacancy_id: str, resume_id: str,
             form=form,
         )
     except MobileAPIError as e:
-        if is_fallback_status(e.status_code):
-            # Не глотим: fallback-обёртка повторит отклик через web-flow.
-            raise
         code = _extract_error_code(e.payload)
+        # HH отдаёт бизнес-отказы и с HTTP 403. Их нельзя принимать за
+        # auth/scope и повторять изменяющий состояние отклик через web.
+        if is_fallback_status(e.status_code) and not code:
+            raise
         error_type = code or f"http_{e.status_code}"
         log_debug(f"mobile submit_response vacancy={vacancy_id}: "
                   f"HTTP {e.status_code} | error_type={error_type} | {e.payload}")

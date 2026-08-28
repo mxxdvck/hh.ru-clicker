@@ -6,6 +6,7 @@ In-memory cache with async disk persistence.
 import json
 import copy
 import os
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -20,7 +21,10 @@ def _atomic_write_json(path: Path, data) -> None:
     старую версию файла или пустой tmp. fsync-цепочка гарантирует, что после
     возврата данные ФИЗИЧЕСКИ на диске.
     """
-    tmp = path.with_suffix(path.suffix + ".tmp") if path.suffix else path.with_name(path.name + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
     dir_fd = None
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -68,7 +72,9 @@ SESSIONS_FILE = DATA_DIR / "browser_sessions.json"
 
 # Единый pool для всех async-сохранений вместо fire-and-forget threading.Thread.
 # Без pool каждый upsert/save спавнит новый thread (8MB stack) под нагрузкой растёт без bound (swarm-11 #2).
-_save_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="storage-save")
+# Один FIFO-worker сохраняет порядок snapshots: более старое состояние не
+# сможет записаться после нового и «откатить» config/accounts на диске.
+_save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="storage-save")
 
 _INTERVIEWS_MAX = 10000
 _INTERVIEWS_EVICT = 1000

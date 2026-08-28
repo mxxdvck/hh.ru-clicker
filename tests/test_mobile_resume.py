@@ -218,7 +218,8 @@ def test_mobile_client_fetch_resume_delegates(oauth_token):
 
     result = MobileHHClient(ACC).fetch_resume("rhash1")
 
-    assert result == RESUME_RESPONSE
+    import json
+    assert json.loads(result) == RESUME_RESPONSE
     req = _last_request()
     assert req.url.split("?")[0] == MOBILE_BASE + "/resumes/rhash1"
     _assert_bearer(req)

@@ -19,6 +19,28 @@ from app.logging_utils import log_debug
 router = APIRouter()
 
 
+def _quiesce_runtime(bot) -> None:
+    """Остановить account/temp workers без глобального stop_event manager-а."""
+    states = list(bot.account_states) + list(bot.temp_states.values())
+    for state in states:
+        state._deleted = True
+        state.paused = True
+        ws = getattr(state, "_ws_client", None)
+        if ws:
+            try:
+                ws.stop()
+            except Exception:
+                pass
+    for state in states:
+        for worker in getattr(state, "_workers", []):
+            try:
+                worker.join(timeout=5)
+            except Exception:
+                pass
+    bot.account_states.clear()
+    bot.temp_states.clear()
+
+
 class ConfigUpdate(BaseModel):
     key: str
     # Pydantic union resolves left-to-right; bool(300000)=True раньше int → коэрсия
@@ -305,6 +327,8 @@ async def api_backup_restore(request: Request, force: int = 0):
     restored = []
     errors = {}
     preserved_all = []
+    from app.instances import bot as _bot
+    _quiesce_runtime(_bot)
     for fname in _BACKUP_FILES:
         if fname not in data:
             continue
@@ -336,7 +360,6 @@ async def api_backup_restore(request: Request, force: int = 0):
         from app.config import load_config as _load_config, load_accounts as _load_accounts
         _load_config()
         _load_accounts()
-        from app.instances import bot as _bot
         _bot.temp_sessions[:] = load_browser_sessions()
     except Exception as e:
         log_debug(f"backup restore: live-reload error: {e}")
@@ -354,6 +377,8 @@ async def api_backup_restore(request: Request, force: int = 0):
 async def api_backup_wipe():
     """Полная очистка: удалить все data/*.json (config, accounts, browser_sessions,
     oauth_tokens). После — in-memory state сбрасывается до дефолтов."""
+    from app.instances import bot as _bot
+    _quiesce_runtime(_bot)
     cleared = []
     errors = {}
     for fname in _BACKUP_FILES:
@@ -367,9 +392,9 @@ async def api_backup_wipe():
     # Сброс in-memory state.
     try:
         from app.config import CONFIG as _CONFIG, Config as _ConfigCls, save_config as _save_config
-        from app.instances import bot as _bot
         accounts_data.clear()
         _bot.temp_sessions.clear()
+        save_browser_sessions([], wait=True)
         # Аудит 2026-08-17 #32: раньше файл удаляли, но CONFIG в памяти жил
         # → первый же save_config() возвращал llm_api_key/llm_profiles на диск.
         # Заменяем sensitive-поля CONFIG на дефолтные (из свежего Config()) и

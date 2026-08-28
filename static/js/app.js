@@ -4405,10 +4405,11 @@ function renderHH(snap) {
 const AppliedState = { all: [], shown: 0, pageSize: 80 };
 
 async function loadApplied(force) {
-  if (!force && AppliedState.all.length) { appliedRender(); return; }
   try {
     const res = await fetch('/api/applied?limit=2000');
+    if (!res.ok) throw new Error(res.status === 401 ? 'Unauthorized: укажите API-ключ' : `HTTP ${res.status}`);
     const items = await res.json();
+    if (!Array.isArray(items)) throw new Error(items?.error || 'Некорректный ответ сервера');
     AppliedState.all = items;
     // Populate account filter
     const sel = document.getElementById('applied-acc-filter');
@@ -4417,7 +4418,7 @@ async function loadApplied(force) {
     sel.innerHTML = `<option value="">${t('applied_all_accs')}</option>` +
       accs.map(a => `<option value="${esc(a)}"${a===prev?' selected':''}>${esc(a)}</option>`).join('');
     appliedRender();
-  } catch(e) { console.error('loadApplied', e); }
+  } catch(e) { console.error('loadApplied', e); alert(e.message); }
 }
 
 function appliedSort(field) {
@@ -4578,10 +4579,11 @@ T.en.db_status_test_passed_lbl  = 'Test passed';
 T.en.db_status_test_pending_lbl = 'Not passed';
 
 async function loadDB(force) {
-  if (!force && DBState.all.length) { dbRender(); return; }
   try {
     const res = await fetch('/api/vacancies?limit=3000');
+    if (!res.ok) throw new Error(res.status === 401 ? 'Unauthorized: укажите API-ключ' : `HTTP ${res.status}`);
     const items = await res.json();
+    if (!Array.isArray(items)) throw new Error(items?.error || 'Некорректный ответ сервера');
     DBState.all = items;
     // Populate account filter
     const sel = document.getElementById('db-acc-filter');
@@ -4590,7 +4592,7 @@ async function loadDB(force) {
     sel.innerHTML = `<option value="">${t('db_all_accs')}</option>` +
       accs.map(a => `<option value="${esc(a)}"${a===prev?' selected':''}>${esc(a)}</option>`).join('');
     dbRender();
-  } catch(e) { console.error('loadDB', e); }
+  } catch(e) { console.error('loadDB', e); alert(e.message); }
 }
 
 function dbSort(field) {

@@ -279,13 +279,15 @@ class MobileHHClient(HHClient):
     # app/mobile_resume_common.py (контракты: scratchpad/apidocs
     # apidocs_group_2/3/5.yaml + apk_writes_group_5.yaml).
 
-    def fetch_resume(self, resume_id: str | None = None) -> dict:
+    def fetch_resume(self, resume_id: str | None = None) -> str:
         """Полное резюме JSON: GET api.hh.ru/resumes/{id}
         (?with_professional_roles=true&with_creds=true). resume_id=None —
         первое резюме аккаунта (mobile_resume_common.resolve_resume_id).
         ВНИМАНИЕ: mobile возвращает dict (полный JSON резюме), web — str
         (текст для LLM); расхождение задокументировано в отчёте Phase 4."""
-        return mobile_resume.fetch_resume(self.acc, resume_id)
+        import json
+        data = mobile_resume.fetch_resume(self.acc, resume_id)
+        return json.dumps(data, ensure_ascii=False, indent=2) if data else ""
 
     def fetch_stats(self, resume_id: str | None = None) -> dict:
         """Статистика резюме: GET /me?with_user_statuses=true (counters:
@@ -296,12 +298,14 @@ class MobileHHClient(HHClient):
         (web-SSR данные) — нули."""
         return mobile_resume_stats.fetch_stats(self.acc, resume_id)
 
-    def fetch_resume_view_history(self, limit: int = 50, resume_id: str | None = None) -> dict:
+    def fetch_resume_view_history(self, limit: int = 50, resume_id: str | None = None) -> list:
         """Кто смотрел резюме: GET api.hh.ru/resumes/{id}/views (пагинация
         до limit). Возврат {items: [{employer_id, name, viewed_at, viewed}],
         total}. ВНИМАНИЕ: mobile возвращает dict с флагом viewed, web —
         list; расхождение задокументировано в отчёте Phase 4."""
-        return mobile_resume_views.fetch_resume_view_history(self.acc, resume_id, limit)
+        result = mobile_resume_views.fetch_resume_view_history(self.acc, resume_id, limit)
+        items = result.get("items", []) if isinstance(result, dict) else result
+        return items if isinstance(items, list) else []
 
     def fetch_resume_views_aggregate(self, resume_id: str | None = None) -> dict:
         """Агрегация просмотров: GET /resumes/{id}/views (все страницы) →

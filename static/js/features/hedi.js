@@ -78,8 +78,15 @@ async function hediLoadHistory(showLoading = true) {
   HediState.loading = true;
   if (showLoading) hediStatus('Загружаю историю…');
   try {
-    const response = await fetch(`/api/account/${HediState.idx}/hedi/history?limit=50`);
-    const data = await response.json();
+    let response = await fetch(`/api/account/${HediState.idx}/hedi/history?limit=50`);
+    let data = await response.json();
+    if (response.status === 409) {
+      const started = await fetch(`/api/account/${HediState.idx}/hedi/start`, {method: 'POST'});
+      const startData = await started.json();
+      if (!started.ok) throw new Error(startData.detail || startData.error || `HTTP ${started.status}`);
+      response = await fetch(`/api/account/${HediState.idx}/hedi/history?limit=50`);
+      data = await response.json();
+    }
     if (!response.ok) throw new Error(data.detail || data.error || `HTTP ${response.status}`);
     hediRender(data.messages || []);
     hediStatus('История обновлена');

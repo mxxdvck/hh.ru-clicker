@@ -34,7 +34,7 @@ def _setup(monkeypatch, acc):
 
 def test_hedi_success(monkeypatch):
     client, fake = _setup(monkeypatch, {"mode": "mobile", "name": "test"})
-    assert client.get("/api/account/0/hedi/start").json()["chat_id"] == "hedi-42"
+    assert client.post("/api/account/0/hedi/start").json()["chat_id"] == "hedi-42"
     history = client.get("/api/account/0/hedi/history").json()
     assert history["messages"][0]["text"] == "Привет"
     response = client.post("/api/account/0/hedi/send", json={"text": " Найди Python "})
@@ -42,16 +42,22 @@ def test_hedi_success(monkeypatch):
     assert fake.sent == [("hedi-42", "Найди Python")]
 
 
+def test_hedi_history_does_not_create_chat(monkeypatch):
+    client, _ = _setup(monkeypatch, {"mode": "mobile", "name": "test"})
+    assert client.get("/api/account/0/hedi/history").status_code == 409
+    assert client.get("/api/account/0/hedi/start").status_code == 405
+
+
 def test_hedi_requires_mobile(monkeypatch):
     client, _ = _setup(monkeypatch, {"mode": "web"})
-    response = client.get("/api/account/0/hedi/start")
+    response = client.post("/api/account/0/hedi/start")
     assert response.status_code == 400
     assert response.json()["detail"] == "hedi requires mobile mode"
 
 
 def test_hedi_account_not_found(monkeypatch):
     client, _ = _setup(monkeypatch, {"mode": "mobile"})
-    response = client.get("/api/account/99/hedi/start")
+    response = client.post("/api/account/99/hedi/start")
     assert response.status_code == 404
 
 
