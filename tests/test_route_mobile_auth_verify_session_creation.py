@@ -26,6 +26,7 @@ def test_verify_materializes_session_and_reloads_bot(monkeypatch):
     monkeypatch.setattr(route, "save_config", lambda values: {})
     monkeypatch.setattr(route, "import_mobile_tokens", lambda tokens, resumes, me: 1)
     monkeypatch.setattr(route, "clear_auth_state", lambda: None)
+    bot.temp_sessions[:] = []
     monkeypatch.setattr("app.storage.load_browser_sessions", lambda: [])
     monkeypatch.setattr("app.storage.save_browser_sessions", lambda sessions, **kwargs: saved.append(list(sessions)))
     try:

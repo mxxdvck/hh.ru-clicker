@@ -33,6 +33,11 @@ class VerifyBody(BaseModel):
     code: str
 
 
+class LogoutBody(BaseModel):
+    mobile_user_id: str = ""
+    resume_hash: str = ""
+
+
 def _error(exc: MobileAuthError):
     return JSONResponse(
         {"ok": False, "error": str(exc), "retry_after": exc.retry_after,
@@ -169,7 +174,10 @@ async def verify_code(body: VerifyBody):
 
 
 @router.post("/logout")
-async def logout():
+async def logout(body: LogoutBody | None = None):
     clear_auth_state()
-    removed = remove_mobile_tokens()
+    removed = remove_mobile_tokens(
+        mobile_user_id=body.mobile_user_id if body else "",
+        resume_hash=body.resume_hash if body else "",
+    )
     return {"ok": True, "stage": "idle", "removed_tokens": removed, "note": "Локальное состояние и мобильные OAuth-токены удалены."}

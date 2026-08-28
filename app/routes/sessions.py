@@ -213,19 +213,6 @@ async def api_session_add(body: dict):
 
     auth_cookies = {k: v for k, v in cookies.items() if k in _AUTH_COOKIE_KEYS}
 
-    # Защита от дублей: если уже есть сессия с таким же resume_hash и hhtoken,
-    # не создаём вторую (иначе UI показывает одну и ту же сессию N раз).
-    new_hhtoken = auth_cookies.get("hhtoken", "")
-    for existing in bot.temp_sessions:
-        ex_hash = existing.get("resume_hash", "")
-        ex_hhtoken = (existing.get("cookies") or {}).get("hhtoken", "")
-        if resume_hash and ex_hash == resume_hash and ex_hhtoken == new_hhtoken:
-            return {
-                "status": "error",
-                "message": f"Сессия уже есть: {existing.get('name', '?')}. Обнови куки через ✏️ Изменить.",
-            }
-
-    idx_in_temp = len(bot.temp_sessions)
     temp_acc = {
         "name": f"{display_name} (\U0001f310)",
         "short": f"\U0001f310{display_name.split()[0] if display_name.split() else display_name}",
@@ -240,7 +227,20 @@ async def api_session_add(body: dict):
         # необходимости пересобирать строку из dict.
         "_raw_cookie_line": raw_cookie_line,
     }
-    bot.temp_sessions.append(temp_acc)
+    # Сериализуем с OTP-upsert/activate/delete, чтобы read-modify-write не
+    # терял параллельно добавленную сессию.
+    with bot._activate_lock:
+        new_hhtoken = auth_cookies.get("hhtoken", "")
+        for existing in bot.temp_sessions:
+            ex_hash = existing.get("resume_hash", "")
+            ex_hhtoken = (existing.get("cookies") or {}).get("hhtoken", "")
+            if resume_hash and ex_hash == resume_hash and ex_hhtoken == new_hhtoken:
+                return {
+                    "status": "error",
+                    "message": f"Сессия уже есть: {existing.get('name', '?')}. Обнови куки через ✏️ Изменить.",
+                }
+        idx_in_temp = len(bot.temp_sessions)
+        bot.temp_sessions.append(temp_acc)
     save_browser_sessions(bot.temp_sessions)
 
     return {
@@ -255,21 +255,22 @@ async def api_session_add(body: dict):
 @router.patch("/api/session/{idx}")
 async def api_session_patch(idx: int, body: dict):
     temp_idx = idx - len(bot.account_states)
-    if 0 <= temp_idx < len(bot.temp_sessions):
-        ts = bot.temp_sessions[temp_idx]
-        if "letter" in body:
-            ts["letter"] = body["letter"]
-            if temp_idx in bot.temp_states:
-                bot.temp_states[temp_idx].acc["letter"] = body["letter"]
-        if "resume_hash" in body:
-            new_hash = body["resume_hash"]
-            ts["resume_hash"] = new_hash
-            if temp_idx in bot.temp_states:
-                state = bot.temp_states[temp_idx]
-                state.acc["resume_hash"] = new_hash
-                state.acc["urls"] = bot._build_session_urls(new_hash)
-        save_browser_sessions(bot.temp_sessions)
-        return {"status": "ok"}
+    with bot._activate_lock:
+        if 0 <= temp_idx < len(bot.temp_sessions):
+            ts = bot.temp_sessions[temp_idx]
+            if "letter" in body:
+                ts["letter"] = body["letter"]
+                if temp_idx in bot.temp_states:
+                    bot.temp_states[temp_idx].acc["letter"] = body["letter"]
+            if "resume_hash" in body:
+                new_hash = body["resume_hash"]
+                ts["resume_hash"] = new_hash
+                if temp_idx in bot.temp_states:
+                    state = bot.temp_states[temp_idx]
+                    state.acc["resume_hash"] = new_hash
+                    state.acc["urls"] = bot._build_session_urls(new_hash)
+            save_browser_sessions(bot.temp_sessions)
+            return {"status": "ok"}
     return {"status": "error", "message": "Не найдено"}
 
 
@@ -466,15 +467,16 @@ async def api_session_profile(idx: int, request: Request):
         body = await request.json()
     except Exception:
         return {"ok": False, "error": "bad json"}
-    ts = bot.temp_sessions[temp_idx]
-    for field in ("name", "short", "color", "resume_hash"):
-        if field in body and isinstance(body[field], str) and body[field].strip():
-            ts[field] = body[field].strip()
-    if temp_idx in bot.temp_states:
-        state = bot.temp_states[temp_idx]
-        state.name = ts.get("name", state.name)
-        state.short = ts.get("short", state.short)
-        state.color = ts.get("color", state.color)
-        state.acc.update({k: ts[k] for k in ("name", "short", "color", "resume_hash") if k in ts})
-    save_browser_sessions(bot.temp_sessions)
+    with bot._activate_lock:
+        ts = bot.temp_sessions[temp_idx]
+        for field in ("name", "short", "color", "resume_hash"):
+            if field in body and isinstance(body[field], str) and body[field].strip():
+                ts[field] = body[field].strip()
+        if temp_idx in bot.temp_states:
+            state = bot.temp_states[temp_idx]
+            state.name = ts.get("name", state.name)
+            state.short = ts.get("short", state.short)
+            state.color = ts.get("color", state.color)
+            state.acc.update({k: ts[k] for k in ("name", "short", "color", "resume_hash") if k in ts})
+        save_browser_sessions(bot.temp_sessions)
     return {"ok": True}

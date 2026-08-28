@@ -6823,6 +6823,8 @@ async function mobileAuthRequestCode(button) {
   } catch (e) { mobileAuthShowError(status, null, e.message); button.disabled = false; }
 }
 
+let MobileAuthLastUserId = '';
+
 async function mobileAuthVerify(button) {
   const status = document.getElementById('ma-status');
   const code = document.getElementById('ma-code').value.trim();
@@ -6835,6 +6837,7 @@ async function mobileAuthVerify(button) {
       return;
     }
     const who = [d.user?.first_name, d.user?.last_name].filter(Boolean).join(' ');
+    MobileAuthLastUserId = String(d.user?.id || '');
     status.textContent = `✅ Авторизация успешна${who ? ': '+who : ''}\nРезюме: ${d.resumes}; вакансии: ${d.vacancies_count}. ${d.browser_session_note}`;
     status.style.color = 'var(--green)'; document.getElementById('ma-code-row').style.display = 'none';
   } catch (e) { mobileAuthShowError(status, null, e.message); }
@@ -6842,7 +6845,11 @@ async function mobileAuthVerify(button) {
 }
 
 async function mobileAuthLogout() {
-  await fetch('/api/mobile-auth/logout', {method:'POST'});
+  await fetch('/api/mobile-auth/logout', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mobile_user_id: MobileAuthLastUserId})
+  });
+  MobileAuthLastUserId = '';
   document.getElementById('ma-code-row').style.display = 'none';
   document.getElementById('ma-code').value = '';
   document.getElementById('ma-status').textContent = 'Локальное состояние входа очищено';

@@ -24,11 +24,13 @@ def test_mobile_tokens_import_to_oauth_format(monkeypatch, tmp_path):
 def test_mobile_logout_preserves_other_tokens(monkeypatch, tmp_path):
     monkeypatch.setattr(oauth, "_OAUTH_FILE", tmp_path / "oauth_tokens.json")
     monkeypatch.setattr(oauth, "_oauth_tokens", {
-        "mobile": {"source": "mobile_otp", "access_token": "a"},
+        "mobile": {"source": "mobile_otp", "access_token": "a", "mobile_user_id": "u1"},
+        "other-mobile": {"source": "mobile_otp", "access_token": "c", "mobile_user_id": "u2"},
         "legacy": {"access_token": "b"},
     })
-    assert oauth.remove_mobile_tokens() == 1
-    assert set(oauth._oauth_tokens) == {"legacy"}
+    assert oauth.remove_mobile_tokens(mobile_user_id="u1") == 1
+    assert set(oauth._oauth_tokens) == {"other-mobile", "legacy"}
+    assert oauth.remove_mobile_tokens() == 0
 
 
 def test_mobile_token_import_fails_when_file_cannot_be_written(monkeypatch, tmp_path):

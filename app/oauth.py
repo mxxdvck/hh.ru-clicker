@@ -281,12 +281,21 @@ def import_mobile_tokens(tokens: dict, resumes: list[dict], me: dict | None = No
     return len(keys)
 
 
-def remove_mobile_tokens() -> int:
-    """Remove only tokens created by the mobile OTP flow."""
+def remove_mobile_tokens(*, mobile_user_id: str = "", resume_hash: str = "") -> int:
+    """Remove one mobile OTP token family, never every mobile user at once."""
+    mobile_user_id = str(mobile_user_id or "").strip()
+    resume_hash = str(resume_hash or "").strip()
+    if not mobile_user_id and not resume_hash:
+        return 0
     removed = 0
     with _oauth_lock:
         for key in list(_oauth_tokens):
-            if isinstance(_oauth_tokens.get(key), dict) and _oauth_tokens[key].get("source") == "mobile_otp":
+            record = _oauth_tokens.get(key)
+            if not isinstance(record, dict) or record.get("source") != "mobile_otp":
+                continue
+            same_user = mobile_user_id and str(record.get("mobile_user_id") or "") == mobile_user_id
+            same_resume = resume_hash and (key == resume_hash or key.startswith(resume_hash + "::"))
+            if same_user or same_resume:
                 _oauth_tokens.pop(key, None)
                 removed += 1
     if removed:

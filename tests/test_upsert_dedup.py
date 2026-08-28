@@ -1,8 +1,10 @@
 from app.mobile_auth import upsert_browser_sessions
+from app.instances import bot
 
 
 def test_otp_three_resumes_creates_one_session(monkeypatch):
     saved = []
+    monkeypatch.setattr(bot, "temp_sessions", [])
     monkeypatch.setattr("app.storage.load_browser_sessions", lambda: [])
     monkeypatch.setattr("app.storage.save_browser_sessions", lambda value, **kw: saved.append(value))
     count = upsert_browser_sessions(
@@ -24,6 +26,7 @@ def test_relogin_preserves_active_resume_and_device_identity(monkeypatch):
     sessions = [{"user_id": "u", "resume_hash": "r2", "all_resumes": [{"hash": "r2", "title": "Two"}],
                  "device_identity": identity}]
     saved = []
+    monkeypatch.setattr(bot, "temp_sessions", sessions)
     monkeypatch.setattr("app.storage.load_browser_sessions", lambda: sessions)
     monkeypatch.setattr("app.storage.save_browser_sessions", lambda value, **kw: saved.append(value))
     upsert_browser_sessions({"hhtoken": "t", "_xsrf": "x"}, {"id": "u"},

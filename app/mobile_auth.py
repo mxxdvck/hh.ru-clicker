@@ -579,11 +579,9 @@ def upsert_browser_sessions(cookies: dict[str, str], me: dict, resumes: list[dic
     """Merge verified autologin cookies into one browser session per HH user."""
     if not cookies.get("hhtoken") or not cookies.get("_xsrf"):
         raise MobileAuthError("Нельзя сохранить неполную браузерную сессию")
-    from app.storage import load_browser_sessions, save_browser_sessions
+    from app.storage import save_browser_sessions
+    from app.instances import bot
 
-    sessions = load_browser_sessions()
-    if not isinstance(sessions, list):
-        sessions = []
     # OTP success creates the identity once.  A re-login must retain the
     # existing account fingerprint instead of rotating it.
     from app.user_agent import generate_device_identity
@@ -594,25 +592,29 @@ def upsert_browser_sessions(cookies: dict[str, str], me: dict, resumes: list[dic
     all_resumes = [{"hash": str(r.get("id")).strip(), "title": r.get("title", "")}
                    for r in resumes if isinstance(r, dict) and str(r.get("id") or "").strip()]
     hashes = {r["hash"] for r in all_resumes}
-    existing = next((s for s in sessions if isinstance(s, dict) and user_id and str(s.get("user_id") or "") == user_id), None)
-    if existing is None:
-        existing = next((s for s in sessions if isinstance(s, dict) and hashes & {
-            str(r.get("hash") or "") for r in (s.get("all_resumes") or []) if isinstance(r, dict)
-        }), None)
-    if existing is not None:
-        active = str(existing.get("resume_hash") or "")
-        known = {r["hash"]: r for r in all_resumes}
-        for old in existing.get("all_resumes") or []:
-            if isinstance(old, dict) and str(old.get("hash") or "") not in known:
-                known[str(old.get("hash"))] = old
-        existing.update({"user_id": user_id, "cookies": dict(cookies), "all_resumes": list(known.values()),
-                         "use_oauth": True, "mode": "mobile"})
-        if not isinstance(existing.get("device_identity"), dict):
-            existing["device_identity"] = generate_device_identity()
-        if not active:
-            existing["resume_hash"] = all_resumes[0]["hash"] if all_resumes else ""
-    else:
-        sessions.append({
+    # Источник истины — актуальный runtime-list, а не потенциально устаревший
+    # disk snapshot. Тот же lock используют activate/delete session flows.
+    with bot._activate_lock:
+        sessions = bot.temp_sessions
+        existing = next((s for s in sessions if isinstance(s, dict) and user_id and str(s.get("user_id") or "") == user_id), None)
+        if existing is None:
+            existing = next((s for s in sessions if isinstance(s, dict) and hashes & {
+                str(r.get("hash") or "") for r in (s.get("all_resumes") or []) if isinstance(r, dict)
+            }), None)
+        if existing is not None:
+            active = str(existing.get("resume_hash") or "")
+            known = {r["hash"]: r for r in all_resumes}
+            for old in existing.get("all_resumes") or []:
+                if isinstance(old, dict) and str(old.get("hash") or "") not in known:
+                    known[str(old.get("hash"))] = old
+            existing.update({"user_id": user_id, "cookies": dict(cookies), "all_resumes": list(known.values()),
+                             "use_oauth": True, "mode": "mobile"})
+            if not isinstance(existing.get("device_identity"), dict):
+                existing["device_identity"] = generate_device_identity()
+            if not active:
+                existing["resume_hash"] = all_resumes[0]["hash"] if all_resumes else ""
+        else:
+            sessions.append({
                 "user_id": user_id,
                 "name": display_name or "HH Mobile",
                 "short": first_name or "HH",
@@ -629,13 +631,9 @@ def upsert_browser_sessions(cookies: dict[str, str], me: dict, resumes: list[dic
                 "urls": [],
                 "url_pages": {},
                 "device_identity": generate_device_identity(),
-            })
-    save_browser_sessions(sessions)
-    try:
-        from app.instances import bot
-        bot.temp_sessions[:] = sessions
-    except Exception:
-        pass
+                })
+        snapshot = list(sessions)
+    save_browser_sessions(snapshot, wait=True)
     return 1
 
 
