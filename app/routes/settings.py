@@ -216,9 +216,18 @@ async def api_raw_accounts_set(request: Request):
         from app.instances import bot as _bot
         from app.logging_utils import log_debug
         by_name = {a.get("name", ""): a for a in merged}
+        retained_states = {}
         for state in _bot.account_states:
             new_acc = by_name.get(state.name)
             if not new_acc:
+                state._deleted = True
+                state.paused = True
+                ws = getattr(state, "_ws_client", None)
+                if ws:
+                    try:
+                        ws.stop()
+                    except Exception:
+                        pass
                 continue
             # In-place mutation (НЕ replace reference): workers держат ссылку на
             # state.acc и stale dict иначе (r13-1 #5). Cookies_lock сохраняем явно.
@@ -235,12 +244,15 @@ async def api_raw_accounts_set(request: Request):
                 if cookies_lock is not None:
                     state.acc["_cookies_lock"] = cookies_lock
                 state.cookies_expired = False
+            retained_states[state.name] = state
+        _bot.account_states[:] = [retained_states[a.get("name", "")] for a in merged
+                                 if a.get("name", "") in retained_states]
     except Exception as e:
         log_debug(f"api_raw_accounts_set live-sync error: {e}")
     return {
         "ok": True,
         "count": len(merged),
-        "warning": "Добавление/удаление аккаунтов требует перезапуска бота.",
+        "warning": "Удаления применены сразу. Добавление новых аккаунтов требует перезапуска бота.",
     }
 
 

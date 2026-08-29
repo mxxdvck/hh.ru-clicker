@@ -16,6 +16,11 @@ function hediAccounts() {
   select.replaceChildren(new Option('Выберите аккаунт', ''));
   accounts.forEach(acc => select.add(new Option(acc.name || acc.short || `Аккаунт ${acc.idx + 1}`, String(acc.idx))));
   if (accounts.some(acc => String(acc.idx) === selected)) select.value = selected;
+  else if (HediState.idx !== null) {
+    HediState.idx = null;
+    document.getElementById('hedi-messages')?.replaceChildren();
+    hediStatus('Выберите mobile-аккаунт для начала чата.');
+  }
 }
 
 function initHediTab() {

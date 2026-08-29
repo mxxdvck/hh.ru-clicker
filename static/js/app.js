@@ -1897,9 +1897,13 @@ function llmInterviewsRender() {
     (State.lastSnapshot?.accounts || []).forEach(a => {
       if (a.short) fullByShort[a.short] = a.name || a.short;
     });
-    const known = new Set([...accSel.options].map(o => o.value).filter(Boolean));
+    const previous = accSel.value;
+    const firstLabel = accSel.options[0]?.textContent || 'Все аккаунты';
+    accSel.replaceChildren(new Option(firstLabel, ''));
+    const known = new Set();
+    const activeShorts = new Set((State.lastSnapshot?.accounts || []).map(a => a.short).filter(Boolean));
     rows.forEach(r => {
-      if (r.acc && !known.has(r.acc)) {
+      if (r.acc && activeShorts.has(r.acc) && !known.has(r.acc)) {
         const opt = document.createElement('option');
         opt.value = r.acc;
         opt.textContent = fullByShort[r.acc] || r.acc;
@@ -1907,6 +1911,7 @@ function llmInterviewsRender() {
         known.add(r.acc);
       }
     });
+    if (known.has(previous)) accSel.value = previous;
   }
 
   // Per-account stats (always from full unfiltered data — re-fetch all)
@@ -2959,8 +2964,7 @@ async function accDeleteCard(idx, btn) {
     const res = await fetch(url, {method: 'DELETE'});
     const data = await res.json();
     if (data.ok || data.status === 'ok') {
-      const card = document.getElementById('card-' + idx);
-      if (card) card.remove();
+      removeAccountFromCurrentSnapshot(idx);
     } else {
       alert('Ошибка: ' + (data.error || data.message || JSON.stringify(data)));
       if (btn) btn.disabled = false;
@@ -2969,6 +2973,15 @@ async function accDeleteCard(idx, btn) {
     alert('Ошибка: ' + e);
     if (btn) btn.disabled = false;
   }
+}
+
+function removeAccountFromCurrentSnapshot(idx) {
+  const snap = State.lastSnapshot;
+  if (!snap || !Array.isArray(snap.accounts)) return;
+  snap.accounts = snap.accounts
+    .filter(a => Number(a.idx) !== Number(idx))
+    .map(a => Number(a.idx) > Number(idx) ? {...a, idx: Number(a.idx) - 1} : a);
+  renderAll(snap);
 }
 
 // ── Browser sessions management in Settings ──────────────────
@@ -3301,6 +3314,7 @@ function sendCmd(obj) {
 
 // ── Rendering ──────────────────────────────────────────────────
 function renderAll(snap) {
+  syncAccountDependentUi(snap);
   renderHeader(snap);
   updateHeaderResumeStats(snap);
   syncLetterSelects(snap);
@@ -3335,6 +3349,29 @@ function renderAll(snap) {
     window.WsToggle.syncSnapshot(snap);
   }
   // applied/tests/views rendered on tab switch
+}
+
+let _accountIdentityByIdx = new Map();
+function syncAccountDependentUi(snap) {
+  const accounts = Array.isArray(snap?.accounts) ? snap.accounts : [];
+  const next = new Map(accounts.map(a => [
+    String(a.idx), `${a.temp ? 't' : 'r'}|${a.resume_hash || ''}|${a.name || a.short || ''}`
+  ]));
+  for (const [idx, identity] of _accountIdentityByIdx) {
+    if (next.get(idx) !== identity) {
+      delete _AccDiagCache[idx];
+      delete ApplyLetters[idx];
+      delete State.prevInterviews[idx];
+      delete State.prevLimitState[idx];
+      delete State.prevCookiesExpired[idx];
+      for (const key of [..._urlPreviewCache.keys()]) {
+        if (String(key).startsWith(idx + '|')) _urlPreviewCache.delete(key);
+      }
+    }
+  }
+  _accountIdentityByIdx = next;
+  if (typeof window.JobStatusSyncAccounts === 'function') window.JobStatusSyncAccounts();
+  if (typeof hediAccounts === 'function') hediAccounts();
 }
 
 function updatePageTitle(snap) {
@@ -3504,10 +3541,16 @@ function renderAccounts(snap) {
   });
   snap.accounts.forEach(acc => {
     let card = document.getElementById('card-' + acc.idx);
+    const identity = `${acc.temp ? 't' : 'r'}|${acc.resume_hash || ''}|${acc.name || acc.short || ''}`;
+    if (card && card.dataset.accountIdentity !== identity) {
+      card.remove();
+      card = null;
+    }
     if (!card) {
       card = document.createElement('div');
       card.id = 'card-' + acc.idx;
       card.className = 'acc-card color-' + (acc.color || 'yellow');
+      card.dataset.accountIdentity = identity;
       card.innerHTML = buildCardHTML(acc);
       grid.appendChild(card);
       // Диагностику не дёргаем сразу для всех — иначе на старте N запросов
@@ -4414,7 +4457,8 @@ async function loadApplied(force) {
     // Populate account filter
     const sel = document.getElementById('applied-acc-filter');
     const prev = sel.value;
-    const accs = [...new Set(items.map(i => i.account).filter(Boolean))].sort();
+    const activeNames = new Set((State.lastSnapshot?.accounts || []).flatMap(a => [a.name, a.short]).filter(Boolean));
+    const accs = [...new Set(items.map(i => i.account).filter(a => a && activeNames.has(a)))].sort();
     sel.innerHTML = `<option value="">${t('applied_all_accs')}</option>` +
       accs.map(a => `<option value="${esc(a)}"${a===prev?' selected':''}>${esc(a)}</option>`).join('');
     appliedRender();
@@ -4588,7 +4632,8 @@ async function loadDB(force) {
     // Populate account filter
     const sel = document.getElementById('db-acc-filter');
     const prev = sel.value;
-    const accs = [...new Set(items.flatMap(i => i.applied_by || []))].sort();
+    const activeNames = new Set((State.lastSnapshot?.accounts || []).flatMap(a => [a.name, a.short]).filter(Boolean));
+    const accs = [...new Set(items.flatMap(i => i.applied_by || []).filter(a => activeNames.has(a)))].sort();
     sel.innerHTML = `<option value="">${t('db_all_accs')}</option>` +
       accs.map(a => `<option value="${esc(a)}"${a===prev?' selected':''}>${esc(a)}</option>`).join('');
     dbRender();
@@ -5016,9 +5061,10 @@ async function sessionSaveLetter(idx) {
 
 async function sessionRemove(idx) {
   if (!await showConfirm(t('confirm_del_sess'))) return;
-  const card = document.getElementById('card-' + idx);
-  if (card) card.remove();
-  await fetch('/api/session/' + idx, {method: 'DELETE'});
+  const res = await fetch('/api/session/' + idx, {method: 'DELETE'});
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.status === 'ok') removeAccountFromCurrentSnapshot(idx);
+  else alert('Ошибка: ' + (data.message || data.error || `HTTP ${res.status}`));
 }
 
 async function sessionRefresh(idx) {

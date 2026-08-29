@@ -76,7 +76,13 @@
     const select = jsEl('job-status-account');
     if (!select) return false;
     const accounts = jsAccounts();
-    if (!accounts.length) return false;
+    if (!accounts.length) {
+      select.replaceChildren(new Option('Нет аккаунтов', ''));
+      const current = jsEl('job-status-current'); if (current) current.textContent = '—';
+      const statuses = jsEl('job-status-select'); if (statuses) { statuses.replaceChildren(); statuses.disabled = true; }
+      const apply = jsEl('job-status-apply'); if (apply) apply.disabled = true;
+      return false;
+    }
     const prev = select.value;
     select.replaceChildren();
     accounts.forEach((acc, i) => {
@@ -183,6 +189,8 @@
       jsStartPolling();
     }
   }
+
+  window.JobStatusSyncAccounts = jsFillAccounts;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', jsInit, {once: true});

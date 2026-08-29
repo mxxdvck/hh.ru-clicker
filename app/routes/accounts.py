@@ -496,7 +496,15 @@ async def api_account_delete(idx: int):
         return {"ok": False, "error": "Аккаунт не найден"}
 
     if 0 <= idx < len(bot.account_states):
-        bot.account_states[idx]._deleted = True
+        deleted_state = bot.account_states[idx]
+        deleted_state._deleted = True
+        deleted_state.paused = True
+        ws = getattr(deleted_state, "_ws_client", None)
+        if ws:
+            try:
+                ws.stop()
+            except Exception:
+                pass
 
     name = accounts_data[idx].get("name", f"#{idx}")
     short = accounts_data[idx].get("short", "")
@@ -510,6 +518,12 @@ async def api_account_delete(idx: int):
     if short:
         bot.vacancy_queues.pop(short, None)
     bot.vacancy_queues.pop(name, None)  # backward compat для старых записей
+    with bot._deque_lock:
+        bot.recent_responses = type(bot.recent_responses)(
+            (r for r in bot.recent_responses
+             if r.get("acc") not in {name, short}),
+            maxlen=bot.recent_responses.maxlen,
+        )
     if resume_hash:
         from app.oauth import invalidate_oauth_token
         invalidate_oauth_token(resume_hash)

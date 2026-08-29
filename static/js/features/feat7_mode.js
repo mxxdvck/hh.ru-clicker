@@ -30,6 +30,7 @@
 
   // idx -> {mode, effective_client} | {error: true} (кэш в памяти, fetch 1 раз на аккаунт)
   var modeCache = {};
+  var modeIdentity = {};
   // idx -> Promise (in-flight guard: параллельные updateCard не плодят запросы)
   var modeInflight = {};
 
@@ -208,6 +209,12 @@
       var r = origUpdateCard.apply(this, arguments);
       try {
         if (card && acc && typeof acc.idx !== 'undefined') {
+          var identity = (acc.temp ? 't' : 'r') + '|' + (acc.resume_hash || '') + '|' + (acc.name || acc.short || '');
+          if (modeIdentity[acc.idx] && modeIdentity[acc.idx] !== identity) {
+            delete modeCache[acc.idx];
+            delete modeInflight[acc.idx];
+          }
+          modeIdentity[acc.idx] = identity;
           renderBadge(card, acc.idx);
           if (!modeCache[acc.idx] && !modeInflight[acc.idx]) {
             fetchMode(acc.idx).then(function () { renderBadge(card, acc.idx); });

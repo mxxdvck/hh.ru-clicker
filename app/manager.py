@@ -893,6 +893,8 @@ class BotManager:
                 "idx": i,
                 "name": s.name,
                 "short": s.short,
+                "resume_hash": s.acc.get("resume_hash", ""),
+                "all_resumes": s.acc.get("all_resumes", []),
                 "color": s.color,
                 "status": _status,
                 "status_detail": _status_detail,
