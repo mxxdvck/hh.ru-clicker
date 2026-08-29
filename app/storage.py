@@ -493,7 +493,7 @@ def save_browser_sessions(sessions: list, *, wait: bool = False):
         my_seq = _sessions_pending_seq
         _sessions_pending_snapshot = snapshot
     def _write():
-        global _sessions_pending_snapshot, _sessions_written_seq
+        global _sessions_pending_snapshot, _sessions_pending_seq, _sessions_written_seq
         with _save_sessions_lock:
             while True:
                 with _sessions_pending_lock:

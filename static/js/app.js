@@ -6877,7 +6877,11 @@ async function mobileAuthVerify(button) {
   button.disabled = true; status.textContent = 'Проверка кода и загрузка данных…'; status.style.color = 'var(--dim)';
   try {
     const r = await fetch('/api/mobile-auth/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code})});
-    const d = await r.json();
+    const raw = await r.text();
+    let d = {};
+    try { d = raw ? JSON.parse(raw) : {}; }
+    catch (_) { throw new Error(`Сервер вернул не-JSON ответ (HTTP ${r.status}): ${raw.slice(0, 160) || 'пустой ответ'}`); }
+    if (!r.ok) throw new Error(d.error || d.detail || `HTTP ${r.status}`);
     if (!d.ok) {
       mobileAuthShowError(status, d, 'Авторизация не удалась');
       return;
