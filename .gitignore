@@ -3,6 +3,17 @@ data/
 backups/
 .env
 .env.local
+.env.*
+!.env.example
+
+# Экспорты аккаунтов / авторизации (в любом подкаталоге)
+**/accounts.json
+**/browser_sessions.json
+**/oauth_tokens.json
+**/cookies.json
+**/*cookies*.json
+**/*session-export*.json
+**/*account-export*.json
 
 # Python
 __pycache__/
@@ -41,3 +52,10 @@ apks/fonts-noto-color-emoji_2.047-0ubuntu0.22.04.1_all.deb
 probe_*.py
 fonts-noto-color-emoji_*.deb
 apks/
+*.apk
+*.aab
+audit/
+audits/
+audit-*/
+decomp*/
+jadx*/
