@@ -161,8 +161,10 @@ def api_key_required() -> str:
 @app.get("/healthz")
 async def healthz():
     n_accounts = len(bot.account_states) if hasattr(bot, "account_states") else 0
-    n_temp = len(bot.temp_states) if hasattr(bot, "temp_states") else 0
-    return {"ok": True, "accounts": n_accounts, "temp_sessions": n_temp}
+    n_temp = len(bot.temp_sessions) if hasattr(bot, "temp_sessions") else 0
+    n_active_temp = len(bot.temp_states) if hasattr(bot, "temp_states") else 0
+    return {"ok": True, "accounts": n_accounts, "temp_sessions": n_temp,
+            "active_temp_sessions": n_active_temp}
 
 # -- Register routers (imported after app is created) --
 from app.routes.core import router as core_router          # noqa: E402
