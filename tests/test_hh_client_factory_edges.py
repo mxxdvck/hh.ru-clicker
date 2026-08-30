@@ -3,7 +3,7 @@
 Покрывают нормализацию account["mode"] и семантику get_client:
   - нет mode → CONFIG.default_client_mode;
   - не-str mode → "auto"; strip().lower();
-  - mode вне {web, mobile, auto} → CONFIG.default_client_mode → fallback "web";
+  - mode вне {web, mobile, oauth, auto} → CONFIG.default_client_mode → fallback "web";
   - "auto" → mobile-first при живом OAuth-токене, иначе web;
     явный "mobile" → FallbackHHClient поверх
     MobileHHClient (Phase 2: auto-fallback на web-flow) без токена.
@@ -49,6 +49,30 @@ def test_missing_mode_default_mobile(monkeypatch):
     client = get_client(_acc())
     assert isinstance(client, FallbackHHClient)
     assert isinstance(client.mobile, MobileHHClient)
+
+
+def test_explicit_oauth_is_strict_mobile_without_web_fallback(monkeypatch):
+    _isolate(monkeypatch, "web")
+    client = get_client(_acc(mode="oauth"))
+    assert type(client) is MobileHHClient
+    assert client.mode == "oauth"
+
+
+def test_missing_mode_default_oauth(monkeypatch):
+    _isolate(monkeypatch, "oauth")
+    client = get_client(_acc())
+    assert type(client) is MobileHHClient
+    assert client.mode == "oauth"
+
+
+def test_oauth_questionnaire_never_enters_web_flow(monkeypatch):
+    _isolate(monkeypatch, "web")
+    client = get_client(_acc(mode="oauth"))
+    result, info = __import__("asyncio").run(
+        client.fill_questionnaire("v1", "Developer", "Example")
+    )
+    assert result == "test"
+    assert info["error_type"] == "oauth_questionnaire_unsupported"
 
 
 def test_missing_mode_default_auto_phase0_web(monkeypatch):

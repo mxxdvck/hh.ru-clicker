@@ -21,11 +21,12 @@
   if (window.__feat7ModeInstalled) return;
   window.__feat7ModeInstalled = true;
 
-  var MODES = ['auto', 'web', 'mobile'];
+  var MODES = ['auto', 'web', 'mobile', 'oauth'];
   var MODE_TITLES = {
     auto: 'бот сам выбирает (сейчас всегда web)',
     web: 'cookies hh.ru (классика)',
-    mobile: 'OAuth api.hh.ru (Android-приложение)'
+    mobile: 'OAuth api.hh.ru + резерв через web cookies',
+    oauth: 'только OAuth api.hh.ru, без cookies и скрытого web fallback'
   };
 
   // idx -> {mode, effective_client} | {error: true} (кэш в памяти, fetch 1 раз на аккаунт)
@@ -62,7 +63,7 @@
 
   function effectiveShort(entry) {
     if (!entry || entry.error) return '';
-    return entry.effective_client === 'MobileHHClient' ? 'MOBILE' : 'WEB';
+    return entry.effective_client.indexOf('MobileHHClient') === 0 ? 'MOBILE' : 'WEB';
   }
 
   // State в app.js объявлен как top-level const — виден здесь как глобальный
@@ -112,10 +113,12 @@
       badge.textContent = 'AUTO';
       badge.classList.add('feat7-mode-auto');
       badge.title = 'effective: ' + effectiveShort(entry);
-    } else if (entry.mode === 'mobile') {
-      badge.textContent = 'MOBILE';
+    } else if (entry.mode === 'mobile' || entry.mode === 'oauth') {
+      badge.textContent = entry.mode === 'oauth' ? 'OAUTH' : 'MOBILE';
       badge.classList.add('feat7-mode-mobile');
-      badge.title = 'mode: mobile (OAuth api.hh.ru)';
+      badge.title = entry.mode === 'oauth'
+        ? 'mode: OAuth-only (без cookies/web fallback)'
+        : 'mode: mobile (OAuth + web fallback)';
     } else {
       badge.textContent = 'WEB';
       badge.classList.add('feat7-mode-web');

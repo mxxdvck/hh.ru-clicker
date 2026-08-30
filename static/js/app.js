@@ -4020,9 +4020,10 @@ function updateCard(card, acc) {
       // Mobile-native (OTP-логин, cookies никогда не было) — это штатный
       // режим, не «Degraded». Юзеров пугала предупреждающая жёлтая плашка
       // при вполне рабочем аккаунте.
-      const isMobileNative = (acc.mode || '').toLowerCase() === 'mobile';
+      const isMobileNative = ['mobile', 'oauth'].includes((acc.mode || '').toLowerCase());
       if (isMobileNative) {
-        cookiesBadge.innerHTML = `📱 Mobile OAuth (${oa.expires_hours}ч)${skipNote}${rsNote}`;
+        const oauthLabel = (acc.mode || '').toLowerCase() === 'oauth' ? 'OAuth-only' : 'Mobile OAuth';
+        cookiesBadge.innerHTML = `📱 ${oauthLabel} (${oa.expires_hours}ч)${skipNote}${rsNote}`;
         cookiesBadge.style.color = rs.blocked ? 'var(--red)' : 'var(--cyan)';
       } else {
         cookiesBadge.innerHTML = acc.degraded_mode

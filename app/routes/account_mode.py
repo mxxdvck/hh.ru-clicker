@@ -1,5 +1,5 @@
 """
-Per-account mode selector (feat7): "auto" | "web" | "mobile".
+Per-account mode selector: "auto" | "web" | "mobile" | "oauth".
 
 Mode сохраняется в accounts.json либо browser_sessions.json (поле "mode")
 и определяет какой HH-клиент использует аккаунт (app.hh_client_factory):
@@ -23,12 +23,15 @@ from app.storage import save_browser_sessions
 
 router = APIRouter()
 
-_ALLOWED_MODES = ["auto", "web", "mobile"]
+_ALLOWED_MODES = ["auto", "web", "mobile", "oauth"]
 
 
 def _effective_client(mode_norm: str) -> str:
     """Какой клиент реально выберет factory для нормализованного mode."""
-    return "MobileHHClient" if _normalize_mode(mode_norm) == "mobile" else "WebHHClient"
+    mode = _normalize_mode(mode_norm)
+    if mode == "oauth":
+        return "MobileHHClient (OAuth-only)"
+    return "MobileHHClient" if mode == "mobile" else "WebHHClient"
 
 
 def _resolve_acc(idx: int):
@@ -67,7 +70,7 @@ async def api_account_mode_get(idx: int):
 
 @router.put("/api/account/{idx}/mode")
 async def api_account_mode_put(idx: int, request: Request):
-    """Сменить mode аккаунта: body {"mode": "auto"|"web"|"mobile"}."""
+    """Сменить mode аккаунта: body {"mode": "auto"|"web"|"mobile"|"oauth"}."""
     resolved = _resolve_acc(idx)
     if resolved is None:
         return JSONResponse({"ok": False, "error": "invalid_idx"}, status_code=404)

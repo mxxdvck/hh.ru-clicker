@@ -51,7 +51,7 @@ def parse_search_url(url: str) -> tuple[str, int | str, dict]:
 
 def _uses_api_search(acc: dict, state) -> bool:
     """Mobile accounts use APK-native API search; web uses it in degradation."""
-    if str(acc.get("mode", "")).strip().lower() == "mobile":
+    if str(acc.get("mode", "")).strip().lower() in ("mobile", "oauth"):
         return True
     return bool(
         state.cookies_expired
@@ -1448,7 +1448,7 @@ class BotManager:
                     # никогда не было web cookies) это НЕ degraded — это штатный
                     # native mode. UI-баджа с "⚠️ Degraded" пугала юзеров без
                     # реальной проблемы.
-                    is_mobile_native = str(acc.get("mode", "")).strip().lower() == "mobile"
+                    is_mobile_native = str(acc.get("mode", "")).strip().lower() in ("mobile", "oauth")
                     has_results = bool(any(v for v in results_by_url.values()))
                     state.degraded_mode = has_results and not is_mobile_native
                     if state.degraded_mode:
@@ -1613,7 +1613,7 @@ class BotManager:
                 # и для mobile-native (OTP-логин без cookies) — обоим доступен
                 # только POST /negotiations без формы. Счётчик один — юзеру
                 # неважно почему пропущено, важно сколько.
-                no_web_cookies = state.degraded_mode or str(state.acc.get("mode", "")).strip().lower() == "mobile"
+                no_web_cookies = state.degraded_mode or str(state.acc.get("mode", "")).strip().lower() in ("mobile", "oauth")
                 if no_web_cookies and (
                     meta.get("has_test") or meta.get("response_letter_required")
                 ):

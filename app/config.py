@@ -84,7 +84,7 @@ class Config:
     auto_apply_tests: bool = False  # Автоматически проходить опросники при откликах
     use_oauth_apply: bool = False  # Использовать OAuth API для откликов (вместо web cookies)
     auto_pick_resume: bool = True  # Выбирать наиболее подходящее резюме для mobile-отклика
-    # Режим HH-клиента по умолчанию для аккаунтов без поля "mode" ("web" | "mobile" | "auto").
+    # Режим HH-клиента: web, mobile (с web fallback), oauth (строгий), auto.
     # Auto выбирает mobile только при живом OAuth-токене.
     default_client_mode: str = "web"
     # WebSocket realtime updates от chatik.hh.ru (Phase 1). Off by default —
@@ -438,7 +438,7 @@ def load_config():
         if "default_client_mode" in data:
             _mode = str(data["default_client_mode"]).strip().lower()
             # Мусорное значение → "web" (не "auto": с Phase 2 auto сможет выбирать mobile).
-            CONFIG.default_client_mode = _mode if _mode in ("web", "mobile", "auto") else "web"
+            CONFIG.default_client_mode = _mode if _mode in ("web", "mobile", "oauth", "auto") else "web"
         if "llm_profiles" in data and isinstance(data["llm_profiles"], list):
             CONFIG.llm_profiles = data["llm_profiles"]
         if "llm_profile_mode" in data and isinstance(data["llm_profile_mode"], str):

@@ -248,11 +248,18 @@ async def api_apply_submit(body: dict):
     # анкеты — территория web-flow (официальное приложение тоже ходит в них
     # через webview), поэтому web-form flow ниже сохраняется байт-в-байт.
     client = get_client(acc)
-    if isinstance(client, FallbackHHClient) and not user_answers:
+    native_oauth = str(acc.get("mode", "")).strip().lower() == "oauth"
+    if (isinstance(client, FallbackHHClient) or native_oauth) and not user_answers:
         try:
             return await _mobile_submit_response(acc_idx, acc, vid, client)
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    if native_oauth:
+        return {
+            "status": "test",
+            "message": "HH API не поддерживает отправку анкеты/теста через OAuth; нужен web-сеанс",
+        }
 
     url_form = f"{hh_base()}/applicant/vacancy_response?vacancyId={vid}&withoutTest=no"
 

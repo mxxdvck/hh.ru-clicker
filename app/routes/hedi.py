@@ -24,8 +24,8 @@ def _account(idx: int) -> dict:
     if not acc:
         raise HTTPException(status_code=404, detail="account not found")
     mode = str(acc.get("mode", "")).strip().lower()
-    if mode != "mobile":
-        raise HTTPException(status_code=400, detail="hedi requires mobile mode")
+    if mode not in ("mobile", "oauth"):
+        raise HTTPException(status_code=400, detail="hedi requires mobile or oauth mode")
     return acc
 
 

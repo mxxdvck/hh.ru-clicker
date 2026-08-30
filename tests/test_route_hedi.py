@@ -52,7 +52,7 @@ def test_hedi_requires_mobile(monkeypatch):
     client, _ = _setup(monkeypatch, {"mode": "web"})
     response = client.post("/api/account/0/hedi/start")
     assert response.status_code == 400
-    assert response.json()["detail"] == "hedi requires mobile mode"
+    assert response.json()["detail"] == "hedi requires mobile or oauth mode"
 
 
 def test_hedi_account_not_found(monkeypatch):

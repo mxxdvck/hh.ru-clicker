@@ -94,7 +94,7 @@ def test_put_invalid_mode_rejected(client, bad_mode):
     data = res.json()
     assert data["ok"] is False
     assert data["error"] == "invalid_mode"
-    assert data["allowed"] == ["auto", "web", "mobile"]
+    assert data["allowed"] == ["auto", "web", "mobile", "oauth"]
     # ничего не сохранено
     assert "mode" not in client.accs[0]
     assert len(client.save_calls) == 0

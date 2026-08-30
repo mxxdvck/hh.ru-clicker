@@ -14,12 +14,13 @@ _MODE_MISSING = object()
 def get_client(account: dict) -> HHClient:
     """Вернуть HH-клиент для аккаунта.
 
-    mode берётся из account["mode"] ("web" | "mobile" | "auto");
+    mode берётся из account["mode"] ("web" | "mobile" | "oauth" | "auto");
     если поля нет — CONFIG.default_client_mode.
     Неизвестный mode трактуется как "web".
 
     "auto" выбирает mobile при живом OAuth-токене для resume_hash,
-    иначе web. Mobile и явный mode="mobile" возвращают
+    иначе web. Строгий mode="oauth" возвращает только MobileHHClient и
+    никогда не обращается к cookies/web-flow. Явный mode="mobile" возвращает
     FallbackHHClient(MobileHHClient, WebHHClient): вызовы идут в
     mobile-flow, а при fallback-статусах (0/401/403/5xx, см.
     app.hh_mobile_transport.is_fallback_status) или NotImplementedError
@@ -35,6 +36,11 @@ def get_client(account: dict) -> HHClient:
             mode = "web"
     if mode == "mobile":
         return FallbackHHClient(MobileHHClient(account), WebHHClient(account))
+    if mode == "oauth":
+        client = MobileHHClient(account)
+        # mode может прийти из CONFIG.default_client_mode, не из account.
+        client.mode = "oauth"
+        return client
     return WebHHClient(account)
 
 
@@ -50,7 +56,7 @@ def _normalize_mode(value):
     def _clean(v):
         if isinstance(v, str):
             v = v.strip().lower()
-            if v in ("web", "mobile", "auto"):
+            if v in ("web", "mobile", "oauth", "auto"):
                 return v
         return None
 

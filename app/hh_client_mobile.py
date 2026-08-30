@@ -72,6 +72,7 @@ class MobileHHClient(HHClient):
 
     def __init__(self, acc: dict):
         super().__init__(acc)
+        self.mode = str(acc.get("mode") or "mobile").strip().lower()
 
     def search_vacancies(self, text: str, area_id=113, per_page: int = 20,
                          page: int = 0, filters=None, max_pages: int = 20) -> list:
@@ -237,6 +238,13 @@ class MobileHHClient(HHClient):
         планируется. Fallback-политика для mobile-аккаунтов (делегировать в
         web-flow или оставить NotImplementedError) будет решена в Phase 3.
         """
+        if self.mode == "oauth":
+            return "test", {
+                "error_type": "oauth_questionnaire_unsupported",
+                "message": "HH API не поддерживает отклики с обязательным тестом; нужен web-сеанс",
+                "title": vacancy_title,
+                "company": company,
+            }
         return await mobile_questionnaire.fill_questionnaire(self.acc, vid, vacancy_title, company)
 
     def check_vacancy_before_apply(self, vid: str) -> dict:
