@@ -1,4 +1,22 @@
+# Runtime and user data must never be sent to the Docker builder.  The
+# Dockerfile only copies explicit source paths, but excluding secrets from the
+# build context also protects remote builders, caches and future COPY changes.
 data/
+backups/
+.env
+.env.*
+!.env.example
+
+# Local reverse-engineering and diagnostic artefacts.
+probe_*.py
+apks/
+*.apk
+*.apks
+*.xapk
+*.log
+
+# Local tooling / VCS.
+.git/
+.venv/
 __pycache__/
 *.pyc
-.git/
