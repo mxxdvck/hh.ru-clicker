@@ -75,6 +75,58 @@ def _server_next_publish_datetime(status: dict) -> datetime | None:
         return None
 
 
+def _vacancy_published_at(meta: dict) -> datetime | None:
+    """Parse an HH ISO timestamp without assuming the server timezone."""
+    raw = (meta or {}).get("published_at") or (meta or {}).get("created_at")
+    if not raw:
+        return None
+    try:
+        value = str(raw).strip().replace("Z", "+00:00")
+        # HH uses ISO-8601 offsets in the compact +0300 form; Python versions
+        # before 3.11 require the colon form +03:00.
+        if len(value) >= 5 and value[-5] in "+-" and value[-4:].isdigit():
+            value = value[:-2] + ":" + value[-2:]
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_fresh_vacancy(meta: dict, hours: int, now: datetime | None = None) -> bool:
+    published = _vacancy_published_at(meta)
+    if published is None or bool((meta or {}).get("archived")):
+        return False
+    if now is None:
+        now = datetime.now(published.tzinfo) if published.tzinfo else datetime.now()
+    elif published.tzinfo and now.tzinfo is None:
+        now = now.astimezone(published.tzinfo)
+    elif not published.tzinfo and now.tzinfo:
+        published = published.replace(tzinfo=now.tzinfo)
+    age_seconds = (now - published).total_seconds()
+    return 0 <= age_seconds <= max(int(hours), 1) * 3600
+
+
+def _effective_daily_ceiling() -> int:
+    limits = [int(v) for v in (CONFIG.daily_apply_limit, CONFIG.hh_daily_limit)
+              if isinstance(v, (int, float)) and int(v) > 0]
+    return min(limits) if limits else 200
+
+
+def _protect_fresh_batch(batch: list, vacancy_meta: dict, *, hours: int,
+                         ceiling: int, reserve: int, used: int) -> tuple[list, int]:
+    """Return allowed batch and count of deferred old vacancies."""
+    old_slots = max(0, ceiling - min(max(reserve, 0), ceiling) - max(used, 0))
+    selected, deferred = [], 0
+    for vid in batch:
+        if _is_fresh_vacancy(vacancy_meta.get(vid, {}) or {}, hours):
+            selected.append(vid)
+        elif old_slots > 0:
+            selected.append(vid)
+            old_slots -= 1
+        else:
+            deferred += 1
+    return selected, deferred
+
+
 def _today_msk() -> str:
     """Дата по Москве. HH работает в MSK; используем её как «день» бота
     чтобы midnight rollover не зависел от TZ контейнера (Docker = UTC по дефолту).
@@ -1170,6 +1222,9 @@ class BotManager:
                 "auto_apply_tests": CONFIG.auto_apply_tests,
                 "use_oauth_apply": CONFIG.use_oauth_apply,
                 "daily_apply_limit": CONFIG.daily_apply_limit,
+                "fresh_vacancies_mode": CONFIG.fresh_vacancies_mode,
+                "fresh_vacancy_hours": CONFIG.fresh_vacancy_hours,
+                "fresh_apply_reserve": CONFIG.fresh_apply_reserve,
                 "stop_on_hh_limit": CONFIG.stop_on_hh_limit,
                 "llm_check_interval": CONFIG.llm_check_interval,
                 "allowed_schedules": CONFIG.allowed_schedules,
@@ -1596,6 +1651,8 @@ class BotManager:
                 log_debug(f"Processing vacancy {vid}: {title}")
                 if not title:
                     continue
+                if meta.get("archived"):
+                    continue
                 if title_include_keywords and not any(k in title for k in title_include_keywords):
                     title_skipped += 1
                     continue
@@ -1687,16 +1744,24 @@ class BotManager:
                 else:
                     filtered.append(vid)
 
-            # Приоритизация: favorited → quick_responses_allowed → остальные.
-            # Каждая ступень — отдельный bucket; внутри bucket'а порядок сохраняется.
+            # Приоритизация: свежие → favorited → quick-response → остальные.
+            # Сначала перемешиваем, чтобы старые вакансии одного класса не имели
+            # постоянного перекоса из-за порядка set, затем stable-sort по стратегии.
             fav_set = getattr(state, "_favorited_ids", set()) or set()
             if filtered:
+                random.shuffle(filtered)
                 def _bucket(v):
-                    if v in fav_set:
-                        return 0
-                    if CONFIG.prefer_quick_responses and (state.vacancy_meta.get(v, {}) or {}).get("quick_responses_allowed"):
-                        return 1
-                    return 2
+                    meta = state.vacancy_meta.get(v, {}) or {}
+                    fresh = CONFIG.fresh_vacancies_mode and _is_fresh_vacancy(
+                        meta, CONFIG.fresh_vacancy_hours)
+                    published = _vacancy_published_at(meta)
+                    published_score = -(published.timestamp()) if published else 0
+                    return (
+                        0 if fresh else 1,
+                        0 if v in fav_set else 1,
+                        0 if CONFIG.prefer_quick_responses and meta.get("quick_responses_allowed") else 1,
+                        published_score if fresh else 0,
+                    )
                 filtered.sort(key=_bucket)
 
             sal_msg = f", \U0001f4b0 зарплата {salary_skipped}" if CONFIG.min_salary > 0 else ""
@@ -1721,8 +1786,6 @@ class BotManager:
                 time.sleep(120)
                 continue
 
-            random.shuffle(filtered)
-
             # Hot leads priority: fetch possible_job_offers and put matching vacancies first
             try:
                 r_offers = HH.get(
@@ -1745,9 +1808,14 @@ class BotManager:
                         if vid_val:
                             offer_vids.add(str(vid_val))
                     if offer_vids:
+                        # Hot leads выше внутри своей freshness-категории, но
+                        # старый hot lead не вытесняет только что опубликованную вакансию.
+                        filtered.sort(key=lambda v: (
+                            0 if (CONFIG.fresh_vacancies_mode and _is_fresh_vacancy(
+                                state.vacancy_meta.get(v, {}) or {}, CONFIG.fresh_vacancy_hours)) else 1,
+                            0 if v in offer_vids else 1,
+                        ))
                         hot = [v for v in filtered if v in offer_vids]
-                        cold = [v for v in filtered if v not in offer_vids]
-                        filtered = hot + cold
                         if hot:
                             self._add_log(state.short, state.color,
                                 f"\U0001f525 {len(hot)} горячих лидов в начале очереди", "success")
@@ -1818,6 +1886,34 @@ class BotManager:
                     self._add_log(state.short, state.color,
                         f"\U0001f6d1 HH daily-limit {_hh_limit} достигнут ({state.hh_today_applies} откликов). Пауза.", "error")
                     break
+
+                # Защищённый остаток: старые вакансии могут расходовать лимит
+                # только до ceiling-reserve. Свежие допускаются до полного
+                # дневного ceiling. Это ожидание, не pause: следующий цикл снова
+                # соберёт поиск и немедленно увидит новые публикации.
+                if CONFIG.fresh_vacancies_mode:
+                    ceiling = _effective_daily_ceiling()
+                    reserve = min(max(int(CONFIG.fresh_apply_reserve), 0), ceiling)
+                    used = max(int(state.daily_sent or 0), int(state.hh_today_applies or 0))
+                    protected_batch, deferred_old = _protect_fresh_batch(
+                        batch, state.vacancy_meta,
+                        hours=CONFIG.fresh_vacancy_hours,
+                        ceiling=ceiling,
+                        reserve=reserve,
+                        used=used,
+                    )
+                    if deferred_old:
+                        state.fresh_reserved_skipped += deferred_old
+                    batch = protected_batch
+                    if not batch:
+                        state.status = "waiting"
+                        state.status_detail = f"Резерв {reserve} откликов для свежих вакансий"
+                        self._add_log(
+                            state.short, state.color,
+                            f"🆕 Резерв: старые вакансии отложены; {reserve} слотов сохранено для публикаций ≤{CONFIG.fresh_vacancy_hours}ч",
+                            "info",
+                        )
+                        break
 
                 # Pre-check: skip inconsistent vacancies if enabled
                 if CONFIG.skip_inconsistent:
@@ -2305,6 +2401,9 @@ class BotManager:
                     meta_entry["employer_id"] = str(emp.get("id") or "") or meta_entry.get("employer_id", "")
                     meta_entry["has_test"] = bool(it.get("has_test"))
                     meta_entry["response_letter_required"] = bool(it.get("response_letter_required"))
+                    meta_entry["published_at"] = it.get("published_at") or it.get("created_at") or ""
+                    meta_entry["created_at"] = it.get("created_at") or ""
+                    meta_entry["archived"] = bool(it.get("archived"))
                     sal = it.get("salary")
                     if isinstance(sal, dict):
                         salary_map[vid] = sal.get("from") or sal.get("to")

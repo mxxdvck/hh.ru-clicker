@@ -149,6 +149,9 @@ class Config:
     # HH daily limit (откликов на резюме в день; HH = 200). Используется как порог
     # для proactive limit-tracker. 0 = выкл (старое поведение по daily_apply_limit).
     hh_daily_limit: int = 200
+    fresh_vacancies_mode: bool = False  # резервировать часть лимита для новых вакансий
+    fresh_vacancy_hours: int = 24       # возраст вакансии для категории «свежая»
+    fresh_apply_reserve: int = 50       # сколько последних откликов не тратить на старые
     llm_fill_questionnaire: bool = False  # Использовать LLM для заполнения опросников
     llm_check_interval: int = 5  # Интервал проверки чатов LLM (в минутах, мин 2)
     llm_ws_push_enabled: bool = True  # Подписаться на wss://websocket.hh.ru для мгновенных ответов
@@ -261,7 +264,7 @@ _CONFIG_KEYS = [
     "filter_agencies", "filter_low_competition", "search_period_days",
     "min_employer_rating", "min_employer_reviews", "min_recommendations_percent",
     "skip_auto_response_vacancies", "prefer_quick_responses", "accredited_it_only",
-    "hh_daily_limit",
+    "hh_daily_limit", "fresh_vacancies_mode", "fresh_vacancy_hours", "fresh_apply_reserve",
     "hh_region", "llm_applicant_gender", "llm_auto_send", "llm_enabled",
     "llm_ws_push_enabled", "use_websocket_realtime", "chat_use_oauth", "llm_use_quick_replies",
     "hh_ai_letter_first_try", "related_vacancies_enabled", "hh_proxy_url",

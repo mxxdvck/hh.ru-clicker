@@ -1389,6 +1389,12 @@ function syncScheduleSettings(snap) {
   if (dal && cfg.daily_apply_limit !== undefined) dal.value = cfg.daily_apply_limit;
   const sohl = document.getElementById('stop-on-hh-limit');
   if (sohl && cfg.stop_on_hh_limit !== undefined) sohl.checked = cfg.stop_on_hh_limit;
+  const fvm = document.getElementById('fresh-vacancies-mode');
+  if (fvm && cfg.fresh_vacancies_mode !== undefined) fvm.checked = cfg.fresh_vacancies_mode;
+  const fvh = document.getElementById('fresh-vacancy-hours');
+  if (fvh && cfg.fresh_vacancy_hours !== undefined && document.activeElement !== fvh) fvh.value = cfg.fresh_vacancy_hours;
+  const far = document.getElementById('fresh-apply-reserve');
+  if (far && cfg.fresh_apply_reserve !== undefined && document.activeElement !== far) far.value = cfg.fresh_apply_reserve;
   // Skip inconsistent
   const si = document.getElementById('skip-inconsistent');
   if (si && cfg.skip_inconsistent !== undefined) si.checked = cfg.skip_inconsistent;

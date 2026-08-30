@@ -99,6 +99,7 @@ class AccountState:
         self.salary_skipped = 0       # Пропущено из-за зарплаты
         self.vacancy_meta = {}        # {vid: {title, company}} из HTML поиска
         self.questionnaire_sent = 0   # Успешно пройдено опросов
+        self.fresh_reserved_skipped = 0  # старые вакансии, отложенные ради резерва
 
         self.hh_interviews = 0
         self.hh_interviews_recent = 0  # за последние 60 дней
