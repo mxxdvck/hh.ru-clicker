@@ -33,6 +33,8 @@ import asyncio
 import requests
 
 from app import (
+    hh_apply,
+    hh_negotiations,
     mobile_apply,
     mobile_chat_actions,
     mobile_chat_list,
@@ -251,7 +253,15 @@ class MobileHHClient(HHClient):
 
     def touch_resume(self) -> tuple:
         """Поднять резюме (touch) (phase 3)."""
-        return mobile_touch_resume.touch_resume(self.acc, self.acc.get("resume_hash", ""))
+        try:
+            return mobile_touch_resume.touch_resume(self.acc, self.acc.get("resume_hash", ""))
+        except NotImplementedError:
+            if self.mode != "oauth":
+                raise
+            # Android WebView fallback, но с cookies, полученными одноразово из
+            # OAuth autologin. Постоянную web-сессию в аккаунт не записываем.
+            from app.mobile_questionnaire import oauth_web_account_sync
+            return hh_apply.touch_resume(oauth_web_account_sync(self.acc))
 
     def fetch_related_vacancies(self, seed_vid: str, max_pages: int = 1) -> list:
         """Похожие вакансии для расширения пула (phase 3)."""
@@ -271,8 +281,13 @@ class MobileHHClient(HHClient):
             return None
 
     def fetch_vacancy_owner_hr_hhid(self, vacancy_id) -> int | None:
-        """HHID HR-а не публикуется mobile API; fallback идёт в web SSR."""
-        raise NotImplementedError("mobile API does not expose vacancy owner HR hhid")
+        """HHID HR-а из SSR через временный OAuth-autologin WebView."""
+        if self.mode != "oauth":
+            raise NotImplementedError("mobile API does not expose vacancy owner HR hhid")
+        from app.mobile_questionnaire import oauth_web_account_sync
+        return hh_negotiations.fetch_vacancy_owner_hr_hhid(
+            oauth_web_account_sync(self.acc), vacancy_id
+        )
 
     # ── Phase 4: резюме/статистика (реализовано: api.hh.ru, Bearer) ──────────
     # Делегирование в app/mobile_resume*.py и app/mobile_job_search_status.py;

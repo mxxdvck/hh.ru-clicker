@@ -85,6 +85,43 @@ def test_oauth_questionnaire_uses_ephemeral_autologin(monkeypatch):
     assert result == "sent"
 
 
+def test_oauth_owner_hr_uses_ephemeral_autologin(monkeypatch):
+    _isolate(monkeypatch, "web")
+    client = get_client(_acc(mode="oauth"))
+    from app import mobile_questionnaire
+    import app.hh_client_mobile as mobile_client_module
+
+    ephemeral = {**client.acc, "cookies": {"hhtoken": "temp", "_xsrf": "csrf"}}
+    monkeypatch.setattr(mobile_questionnaire, "oauth_web_account_sync", lambda acc: ephemeral)
+    monkeypatch.setattr(
+        mobile_client_module.hh_negotiations,
+        "fetch_vacancy_owner_hr_hhid",
+        lambda acc, vid: 42 if acc is ephemeral and vid == "v1" else None,
+    )
+    assert client.fetch_vacancy_owner_hr_hhid("v1") == 42
+
+
+def test_oauth_touch_uses_ephemeral_web_fallback_on_unsupported_mobile(monkeypatch):
+    _isolate(monkeypatch, "web")
+    client = get_client(_acc(mode="oauth"))
+    from app import mobile_questionnaire
+    import app.hh_client_mobile as mobile_client_module
+
+    ephemeral = {**client.acc, "cookies": {"hhtoken": "temp", "_xsrf": "csrf"}}
+    monkeypatch.setattr(
+        mobile_client_module.mobile_touch_resume,
+        "touch_resume",
+        lambda *args: (_ for _ in ()).throw(NotImplementedError("unsupported")),
+    )
+    monkeypatch.setattr(mobile_questionnaire, "oauth_web_account_sync", lambda acc: ephemeral)
+    monkeypatch.setattr(
+        mobile_client_module.hh_apply,
+        "touch_resume",
+        lambda acc: (True, "webview") if acc is ephemeral else (False, "wrong"),
+    )
+    assert client.touch_resume() == (True, "webview")
+
+
 def test_missing_mode_default_auto_phase0_web(monkeypatch):
     _isolate(monkeypatch, "auto")
     assert isinstance(get_client(_acc()), WebHHClient)

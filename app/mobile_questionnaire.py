@@ -18,7 +18,7 @@ import asyncio
 from app import hh_apply
 
 
-async def oauth_web_account(acc: dict) -> dict:
+def oauth_web_account_sync(acc: dict) -> dict:
     """Build an ephemeral HH web session from the account's OAuth token.
 
     The Android app uses the same bridge for WebView-only screens.  Cookies are
@@ -27,17 +27,19 @@ async def oauth_web_account(acc: dict) -> dict:
     from app.mobile_auth import HHMobileClient
     from app.oauth import _obtain_oauth_token
 
-    token = await asyncio.to_thread(_obtain_oauth_token, acc)
+    token = _obtain_oauth_token(acc)
     if not token:
         raise RuntimeError("Нет действующего OAuth-токена")
     user_id = str(acc.get("user_id") or "").strip()
     if not user_id:
-        counters = await asyncio.to_thread(HHMobileClient()._request, "GET", "me", token=token)
+        counters = HHMobileClient()._request("GET", "me", token=token)
         user_id = str(counters.get("id") or "") if isinstance(counters, dict) else ""
-    cookies = await asyncio.to_thread(
-        HHMobileClient().create_browser_cookies, token, {"id": user_id}
-    )
+    cookies = HHMobileClient().create_browser_cookies(token, {"id": user_id})
     return {**acc, "cookies": cookies}
+
+
+async def oauth_web_account(acc: dict) -> dict:
+    return await asyncio.to_thread(oauth_web_account_sync, acc)
 
 
 async def fill_questionnaire(acc: dict, vid: str,
