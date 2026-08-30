@@ -17,6 +17,7 @@
     pollTimer: null,
     reqSeq: 0, // монотонный счётчик: при быстром переключении аккаунтов
                // применяем только ответ последнего запроса
+    selectionVersion: 0, // diagnostics не должен затирать ручной выбор
   };
 
   // esc() из app.js; fallback на случай загрузки без него.
@@ -67,6 +68,7 @@
         <div id="job-status-result" style="min-height:16px" aria-live="polite"></div>
       </div>`;
     jsEl('job-status-account')?.addEventListener('change', () => jsLoadDiagnostics());
+    jsEl('job-status-select')?.addEventListener('change', () => { JobStatusState.selectionVersion += 1; });
     jsEl('job-status-apply')?.addEventListener('click', jsApply);
   }
 
@@ -118,6 +120,7 @@
     if (!accSel || accSel.value === '') return;
     const idx = accSel.value;
     const seq = ++JobStatusState.reqSeq;
+    const selectionVersion = JobStatusState.selectionVersion;
     const currentEl = jsEl('job-status-current');
     const statusSel = jsEl('job-status-select');
     const applyBtn = jsEl('job-status-apply');
@@ -136,10 +139,12 @@
         ? d.available_statuses : {};
       const keys = Object.keys(avail);
       if (statusSel) {
+        const desiredStatus = selectionVersion === JobStatusState.selectionVersion
+          ? d.status : statusSel.value;
         statusSel.replaceChildren();
         keys.forEach(k => statusSel.add(new Option(avail[k], k)));
         statusSel.disabled = !keys.length;
-        if (d.status && keys.includes(d.status)) statusSel.value = d.status;
+        if (desiredStatus && keys.includes(desiredStatus)) statusSel.value = desiredStatus;
       }
       if (applyBtn) applyBtn.disabled = !keys.length;
     } catch (e) {

@@ -49,3 +49,17 @@ def test_smaller_custom_daily_limit_is_respected():
     )
     assert selected == []
     assert deferred == 1
+
+
+def test_fresh_can_use_last_slot_but_nothing_can_exceed_ceiling():
+    meta = {"fresh": _meta(1), "old": _meta(48)}
+    selected, deferred = _protect_fresh_batch(
+        ["old", "fresh"], meta, hours=24, ceiling=200, reserve=50, used=199,
+    )
+    assert selected == ["fresh"]
+    assert deferred == 1
+    selected, deferred = _protect_fresh_batch(
+        ["fresh"], meta, hours=24, ceiling=200, reserve=50, used=200,
+    )
+    assert selected == []
+    assert deferred == 1

@@ -115,13 +115,18 @@ def _protect_fresh_batch(batch: list, vacancy_meta: dict, *, hours: int,
                          ceiling: int, reserve: int, used: int) -> tuple[list, int]:
     """Return allowed batch and count of deferred old vacancies."""
     old_slots = max(0, ceiling - min(max(reserve, 0), ceiling) - max(used, 0))
+    total_slots = max(0, ceiling - max(used, 0))
     selected, deferred = [], 0
     for vid in batch:
-        if _is_fresh_vacancy(vacancy_meta.get(vid, {}) or {}, hours):
+        if total_slots <= 0:
+            deferred += 1
+        elif _is_fresh_vacancy(vacancy_meta.get(vid, {}) or {}, hours):
             selected.append(vid)
+            total_slots -= 1
         elif old_slots > 0:
             selected.append(vid)
             old_slots -= 1
+            total_slots -= 1
         else:
             deferred += 1
     return selected, deferred
