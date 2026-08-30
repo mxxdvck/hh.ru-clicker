@@ -1895,6 +1895,16 @@ class BotManager:
                     ceiling = _effective_daily_ceiling()
                     reserve = min(max(int(CONFIG.fresh_apply_reserve), 0), ceiling)
                     used = max(int(state.daily_sent or 0), int(state.hh_today_applies or 0))
+                    # Перед границей резерва принудительно учитываем ручные
+                    # отклики и отклики из другого процесса/устройства.
+                    if used >= max(0, ceiling - reserve - max(int(batch_size), 1)):
+                        exact = fetch_negotiations_today_count(acc, force=True)
+                        if exact and exact.get("msk_date") == _today_msk():
+                            server_used = max(int(exact.get("today") or 0), 0)
+                            with state._state_lock:
+                                state.hh_today_applies = server_used
+                                state.hh_today_applies_updated = datetime.now().isoformat(timespec="seconds")
+                            used = max(used, server_used)
                     protected_batch, deferred_old = _protect_fresh_batch(
                         batch, state.vacancy_meta,
                         hours=CONFIG.fresh_vacancy_hours,
@@ -2268,8 +2278,8 @@ class BotManager:
           снимает hard_stopped/paused (auto-recovery, не ждём midnight).
         - На rollover в полночь MSK HH сам обнулит count → автоматически снимется.
         """
-        # Warmup 30s (даём воркерам стартануть)
-        if self._stop_event.wait(30):
+        # После рестарта быстро добираем из HH ручные/внешние отклики.
+        if self._stop_event.wait(5):
             return
         while not self._stop_event.is_set():
             try:
@@ -2279,7 +2289,7 @@ class BotManager:
                 for state in states:
                     if not state.acc.get("resume_hash"):
                         continue
-                    info = fetch_negotiations_today_count(state.acc)
+                    info = fetch_negotiations_today_count(state.acc, force=True)
                     if not info:
                         continue
                     count = info.get("today", 0)
@@ -2314,8 +2324,8 @@ class BotManager:
                         )
             except Exception as e:
                 log_debug(f"HH limit tracker error: {e}")
-            # 30 мин
-            if self._stop_event.wait(1800):
+            # Пять минут: небольшой drift без лишней нагрузки на HH.
+            if self._stop_event.wait(300):
                 return
 
     def _oauth_refresh_worker(self):

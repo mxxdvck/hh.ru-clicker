@@ -927,7 +927,7 @@ _negotiations_count_cache: dict = {}  # {resume_hash: (expiry, {today, today_msk
 _negotiations_count_lock = threading.Lock()
 
 
-def fetch_negotiations_today_count(acc: dict) -> dict:
+def fetch_negotiations_today_count(acc: dict, force: bool = False) -> dict:
     """Реальное число сегодняшних откликов (по MSK) — источник истины для
     HH daily-limit'а. Используется чтобы перестать угадывать
     `hard_stopped` и автоматом снимать stop когда лимит реально сброшен.
@@ -941,7 +941,7 @@ def fetch_negotiations_today_count(acc: dict) -> dict:
     now = time.time()
     with _negotiations_count_lock:
         cached = _negotiations_count_cache.get(rh)
-        if cached and cached[0] > now:
+        if not force and cached and cached[0] > now:
             return cached[1]
     H = _oauth_headers(acc)
     if not H:
@@ -962,7 +962,7 @@ def fetch_negotiations_today_count(acc: dict) -> dict:
         for page in range(5):
             r = HH.get(
                 "https://api.hh.ru/negotiations",
-                headers=H, params={"per_page": 100, "page": page},
+                headers=H, params={"per_page": 100, "page": page, "order_by": "created_at"},
                 cookie_jar_key=_token_key(acc) or None, timeout=5,
             )
             if r.status_code != 200:
@@ -975,7 +975,10 @@ def fetch_negotiations_today_count(acc: dict) -> dict:
                 break
             for it in items:
                 try:
-                    dt = datetime.fromisoformat(it.get("created_at", ""))
+                    value = str(it.get("created_at", "")).strip().replace("Z", "+00:00")
+                    if len(value) >= 5 and value[-5] in "+-" and value[-4:].isdigit():
+                        value = value[:-2] + ":" + value[-2:]
+                    dt = datetime.fromisoformat(value)
                 except Exception:
                     continue
                 msk_dt = dt.astimezone(MSK) if MSK else dt
