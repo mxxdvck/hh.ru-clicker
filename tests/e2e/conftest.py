@@ -545,13 +545,16 @@ class UIController:
         """Серверный разрыв WS (для reconnect-тестов)."""
         self._hub.close_all(code=code, reason=reason)
 
-    def set_response(self, method, path_regex, body=None, status=200):
+    def set_response(self, method, path_regex, body=None, status=200,
+                     *, raw_body=None, content_type="application/json"):
         """Override HTTP-ответа: method+path_regex(search) -> JSON(body), status."""
         self._overrides.append({
             "method": method.upper(),
             "pattern": re.compile(path_regex),
             "body": body,
             "status": int(status),
+            "raw_body": raw_body,
+            "content_type": content_type,
         })
 
     def wait_until(self, predicate, timeout=5.0, interval=0.05,
@@ -583,10 +586,12 @@ class UIController:
         # overrides имеют приоритет
         for ov in self._overrides:
             if ov["method"] in (method, "*") and ov["pattern"].search(url_path):
+                response_body = (ov["raw_body"] if ov["raw_body"] is not None
+                                 else json.dumps(ov["body"], ensure_ascii=False))
                 route.fulfill(
                     status=ov["status"],
-                    content_type="application/json",
-                    body=json.dumps(ov["body"], ensure_ascii=False),
+                    content_type=ov["content_type"],
+                    body=response_body,
                 )
                 return
 
@@ -778,4 +783,3 @@ def pytest_runtest_protocol(item, nextitem):
         if not _PENDING_E2E and _PW_STATE["playwright"] is not None:
             _pw_shutdown()
     return result
-

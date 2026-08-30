@@ -8,10 +8,8 @@ i18n
   [data-i18n] текстом из словаря T в app.js, [data-i18n-ph] — placeholder'ы,
   плюс ставит document.documentElement.lang. Выбор хранится в localStorage['hh-lang'].
 - Кнопка сама меняет подпись RU↔EN. Повторный клик возвращает RU.
-- Квирк: при загрузке страницы init НЕ вызывает applyI18n() — из localStorage
-  восстанавливается только подпись кнопки (#lang-btn = "EN"), статические
-  data-i18n-элементы остаются RU до первого клика. Тест persistence проверяет
-  именно реальное поведение.
+- При загрузке сохранённый язык применяется ко всему интерфейсу, включая
+  data-i18n, placeholders и document.documentElement.lang.
 
 Тема
 - Светлой темы и переключателя темы НЕТ (prefers-color-scheme в CSS тоже нет).
@@ -138,10 +136,7 @@ def test_i18n_toggle_ru_to_en_and_back(ui):
 
 
 def test_i18n_choice_persisted_across_reload(ui):
-    """Выбор EN сохраняется в localStorage: после reload кнопка показывает EN,
-    а клик возвращает RU (внутренний lang был 'en'). Реальное поведение:
-    статические data-i18n при reload НЕ перерисовываются (applyI18n на init
-    не вызывается) — ассертим только подпись кнопки и результат клика."""
+    """Выбор EN сохраняется и полностью применяется после reload."""
     _prime_state(ui)
     ui.open()
 
@@ -152,6 +147,8 @@ def test_i18n_choice_persisted_across_reload(ui):
 
     # lang из localStorage применён к подписи кнопки
     expect(ui.page.locator("#lang-btn")).to_have_text("EN", timeout=10_000)
+    expect(ui.page.locator(".tab[data-tab=main]")).to_have_text("📊 Main")
+    expect(ui.page.locator("html")).to_have_attribute("lang", "en")
     # внутренний lang == 'en' → клик переключает обратно на RU
     expect(ui.page.locator("#lang-btn")).to_be_enabled(timeout=10_000)
     ui.page.click("#lang-btn")

@@ -3263,7 +3263,6 @@ function connect() {
         State.lastSnapshot = snap;
         try {
           renderAll(snap);
-          if (typeof State._jsonAllRefresh === 'function') State._jsonAllRefresh();
           const dbg = document.getElementById('dbg-err');
           if (dbg) dbg.style.display = 'none';
         } catch (renderErr) {
@@ -6995,6 +6994,7 @@ connect();
 // overwriting the saved prompt. Removing the init keeps the textarea empty
 // until the WS snapshot arrives (~200ms) which is the actual saved value.
 document.getElementById('lang-btn').textContent = lang.toUpperCase();
+applyI18n();
 // Restore last active tab from localStorage.
 // Whitelist check: localStorage controllable, не вставляем сырое значение
 // в CSS селектор (kimi-r14-3 #7). Используем _ALL_TAB_IDS вместо
@@ -7040,18 +7040,5 @@ if ('Notification' in window && Notification.permission === 'default') {
   // user правит → флаг dirty (сбрасывается при load/save)
   const ta = document.getElementById('json-all-ta');
   if (ta) ta.addEventListener('input', () => { ta.dataset.dirty = '1'; });
-  // Refresh на каждом WS state_update если редактор открыт.
-  // 300ms tick → fetch /api/backup keep-alive нагрузка минимальная.
-  if (typeof State !== 'undefined') {
-    let _lastFetch = 0;
-    State._jsonAllRefresh = () => {
-      if (!el.open) return;
-      if (ta && ta.dataset.dirty === '1') return;
-      const now = Date.now();
-      if (now - _lastFetch < 1500) return;  // throttle 1.5s
-      _lastFetch = now;
-      jsonAllLoad(null);
-    };
-  }
   if (el.open) triggerLoad();
 })();
