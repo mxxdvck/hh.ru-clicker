@@ -1608,13 +1608,10 @@ class BotManager:
                 if "DISCARD" in hh_labels:
                     discard_skipped += 1
                     continue
-                # Без cookies не заполнить опросник/тест — пропускаем вакансии
-                # где они требуются. Работает и для degraded (web→oauth fallback),
-                # и для mobile-native (OTP-логин без cookies) — обоим доступен
-                # только POST /negotiations без формы. Счётчик один — юзеру
-                # неважно почему пропущено, важно сколько.
-                no_web_cookies = state.degraded_mode or str(state.acc.get("mode", "")).strip().lower() in ("mobile", "oauth")
-                if no_web_cookies and (
+                # В strict OAuth/mobile режиме анкета открывается через штатный
+                # autologin WebView bridge. Только degraded web-сессия без этого
+                # flow должна заранее пропускать web-only формы.
+                if state.degraded_mode and (
                     meta.get("has_test") or meta.get("response_letter_required")
                 ):
                     state.degraded_skipped += 1

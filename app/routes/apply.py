@@ -19,6 +19,7 @@ from app.questionnaire import get_questionnaire_answer, _parse_questionnaire_ric
 from app.instances import bot
 from app.user_agent import webview_user_agent
 from app.hh_apply import _aio_egress_kwargs
+from app.mobile_questionnaire import oauth_web_account
 
 
 router = APIRouter()
@@ -78,6 +79,13 @@ async def _fetch_questionnaire_data(acc: dict, vid: str) -> dict:
     return {"questions": questions, "hidden": hidden, "url_form": url_form}
 
 
+async def _web_acc_for_form(acc: dict) -> dict:
+    """Use OAuth autologin cookies for WebView-only forms without persisting them."""
+    if str(acc.get("mode") or "").strip().lower() == "oauth":
+        return await oauth_web_account(acc)
+    return acc
+
+
 def _result_to_response(result: str, info: dict, vid: str,
                         questions: list = None, letter: str = "") -> dict:
     """
@@ -135,7 +143,7 @@ async def _mobile_submit_response(acc_idx: int, acc: dict, vid: str, client) -> 
 
     questions = None
     if result == "test":
-        qdata = await _fetch_questionnaire_data(acc, vid)
+        qdata = await _fetch_questionnaire_data(await _web_acc_for_form(acc), vid)
         questions = qdata["questions"]
 
     return _result_to_response(result, info, vid, questions=questions, letter=acc["letter"])
@@ -163,6 +171,11 @@ async def api_apply_check(body: dict):
     custom_letter = body.get("letter", "").strip()
     if custom_letter:
         acc["letter"] = custom_letter
+
+    try:
+        acc = await _web_acc_for_form(acc)
+    except Exception as exc:
+        return {"status": "error", "vacancy_id": vid, "message": f"OAuth autologin: {exc}"}
 
     sess_kw, req_kw = _aio_egress_kwargs()
     try:
@@ -256,10 +269,10 @@ async def api_apply_submit(body: dict):
             return {"status": "error", "message": str(e)}
 
     if native_oauth:
-        return {
-            "status": "test",
-            "message": "HH API не поддерживает отправку анкеты/теста через OAuth; нужен web-сеанс",
-        }
+        try:
+            acc = await _web_acc_for_form(acc)
+        except Exception as exc:
+            return {"status": "error", "message": f"OAuth autologin: {exc}"}
 
     url_form = f"{hh_base()}/applicant/vacancy_response?vacancyId={vid}&withoutTest=no"
 

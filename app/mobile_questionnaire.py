@@ -13,7 +13,31 @@ hh_apply.fill_and_submit_questionnaire. Cookies hh.ru в acc те же, что
 же функцию, так что поведение mobile и web совпадает.
 """
 
+import asyncio
+
 from app import hh_apply
+
+
+async def oauth_web_account(acc: dict) -> dict:
+    """Build an ephemeral HH web session from the account's OAuth token.
+
+    The Android app uses the same bridge for WebView-only screens.  Cookies are
+    kept only in the returned copy and are never persisted in the OAuth account.
+    """
+    from app.mobile_auth import HHMobileClient
+    from app.oauth import _obtain_oauth_token
+
+    token = await asyncio.to_thread(_obtain_oauth_token, acc)
+    if not token:
+        raise RuntimeError("Нет действующего OAuth-токена")
+    user_id = str(acc.get("user_id") or "").strip()
+    if not user_id:
+        counters = await asyncio.to_thread(HHMobileClient()._request, "GET", "me", token=token)
+        user_id = str(counters.get("id") or "") if isinstance(counters, dict) else ""
+    cookies = await asyncio.to_thread(
+        HHMobileClient().create_browser_cookies, token, {"id": user_id}
+    )
+    return {**acc, "cookies": cookies}
 
 
 async def fill_questionnaire(acc: dict, vid: str,
@@ -29,5 +53,11 @@ async def fill_questionnaire(acc: dict, vid: str,
     Возвращает (result, info) web-функции:
     result = sent | limit | test | error | auth_error.
     """
+    web_acc = acc
+    if str(acc.get("mode") or "").strip().lower() == "oauth":
+        try:
+            web_acc = await oauth_web_account(acc)
+        except Exception as exc:
+            return "auth_error", {"error_type": "oauth_autologin_failed", "message": str(exc)}
     return await hh_apply.fill_and_submit_questionnaire(
-        acc, vid, vacancy_title, company)
+        web_acc, vid, vacancy_title, company)

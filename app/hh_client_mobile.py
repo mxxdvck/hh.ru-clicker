@@ -238,13 +238,6 @@ class MobileHHClient(HHClient):
         планируется. Fallback-политика для mobile-аккаунтов (делегировать в
         web-flow или оставить NotImplementedError) будет решена в Phase 3.
         """
-        if self.mode == "oauth":
-            return "test", {
-                "error_type": "oauth_questionnaire_unsupported",
-                "message": "HH API не поддерживает отклики с обязательным тестом; нужен web-сеанс",
-                "title": vacancy_title,
-                "company": company,
-            }
         return await mobile_questionnaire.fill_questionnaire(self.acc, vid, vacancy_title, company)
 
     def check_vacancy_before_apply(self, vid: str) -> dict:

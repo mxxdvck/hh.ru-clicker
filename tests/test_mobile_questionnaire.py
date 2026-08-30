@@ -101,3 +101,22 @@ def test_fill_questionnaire_no_longer_raises_not_implemented(monkeypatch):
 
     assert result == ("sent", {})
     assert calls == [(ACC, "v1", "", "")]
+
+
+def test_oauth_questionnaire_uses_ephemeral_web_account(monkeypatch):
+    oauth_acc = {**ACC, "mode": "oauth"}
+    ephemeral = {**oauth_acc, "cookies": {"hhtoken": "temp", "_xsrf": "csrf"}}
+    calls = []
+
+    async def fake_autologin(acc):
+        assert acc is oauth_acc
+        return ephemeral
+
+    async def fake_submit(*args):
+        calls.append(args)
+        return "sent", {}
+
+    monkeypatch.setattr(mobile_questionnaire, "oauth_web_account", fake_autologin)
+    monkeypatch.setattr(hh_apply, "fill_and_submit_questionnaire", fake_submit)
+    assert _run_coro(mobile_questionnaire.fill_questionnaire(oauth_acc, "v9")) == ("sent", {})
+    assert calls == [(ephemeral, "v9", "", "")]

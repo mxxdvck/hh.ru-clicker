@@ -65,14 +65,24 @@ def test_missing_mode_default_oauth(monkeypatch):
     assert client.mode == "oauth"
 
 
-def test_oauth_questionnaire_never_enters_web_flow(monkeypatch):
+def test_oauth_questionnaire_uses_ephemeral_autologin(monkeypatch):
     _isolate(monkeypatch, "web")
     client = get_client(_acc(mode="oauth"))
+    from app import mobile_questionnaire
+
+    async def fake_web_account(acc):
+        return {**acc, "cookies": {"hhtoken": "ephemeral", "_xsrf": "csrf"}}
+
+    async def fake_submit(acc, *args):
+        assert acc["cookies"]["hhtoken"] == "ephemeral"
+        return "sent", {}
+
+    monkeypatch.setattr(mobile_questionnaire, "oauth_web_account", fake_web_account)
+    monkeypatch.setattr(mobile_questionnaire.hh_apply, "fill_and_submit_questionnaire", fake_submit)
     result, info = __import__("asyncio").run(
         client.fill_questionnaire("v1", "Developer", "Example")
     )
-    assert result == "test"
-    assert info["error_type"] == "oauth_questionnaire_unsupported"
+    assert result == "sent"
 
 
 def test_missing_mode_default_auto_phase0_web(monkeypatch):
