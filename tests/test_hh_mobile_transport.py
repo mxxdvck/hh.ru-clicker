@@ -10,6 +10,7 @@ from app.hh_mobile_transport import (
     mobile_headers,
     mobile_request,
 )
+from app.user_agent import mobile_user_agent
 
 ACC = {"name": "a1", "cookies": {}, "resume_hash": "rh1"}
 
@@ -17,7 +18,9 @@ ACC = {"name": "a1", "cookies": {}, "resume_hash": "rh1"}
 def test_headers_contract():
     h = mobile_headers("tok123")
     assert h["Authorization"] == "Bearer tok123"
-    assert h["User-Agent"] == "ru.hh.android/26.29.11476, Device: Pixel 10, Android OS: 17 (UUID: 8f42e879-43c7-4d86-a671-31ea36ed924b)"
+    # An explicit local mobile-auth override may intentionally pin an older
+    # version, so the transport must use the effective configured identity.
+    assert h["User-Agent"] == mobile_user_agent()
     assert h["x-force-app-access"] == "true"
 
 

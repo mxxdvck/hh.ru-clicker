@@ -49,6 +49,25 @@ def parse_search_url(url: str) -> tuple[str, int | str, dict]:
     return text, area, filters
 
 
+def _mobile_search_filters(filters: dict) -> dict:
+    """Add Android-native ordering/period controls to a mobile search.
+
+    The API supports period values 1, 3 and 7 days.  Fresh mode requests the
+    newest vacancies from HH before the local page cap is applied; otherwise a
+    locally sorted result can still miss the globally newest vacancies.
+    """
+    result = dict(filters or {})
+    if CONFIG.fresh_vacancies_mode:
+        result.setdefault("order_by", "publication_time")
+    try:
+        period = int(CONFIG.search_period_days)
+    except (TypeError, ValueError):
+        period = 0
+    if period in (1, 3, 7):
+        result.setdefault("period", period)
+    return result
+
+
 def _uses_api_search(acc: dict, state) -> bool:
     """Mobile accounts use APK-native API search; web uses it in degradation."""
     if str(acc.get("mode", "")).strip().lower() in ("mobile", "oauth"):
@@ -370,6 +389,7 @@ class BotManager:
                 # после restart browser-сессии теряли use_oauth/apply_tests (swarm-12 #9).
                 "use_oauth": bool(ts.get("use_oauth", False)),
                 "apply_tests": bool(ts.get("apply_tests", False)),
+                "safety_enabled": bool(ts.get("safety_enabled", CONFIG.skip_inconsistent)),
                 "mode": ts.get("mode", "web"),
             }
             state = AccountState(acc)
@@ -997,6 +1017,11 @@ class BotManager:
                 "resume_new_invitations_total": s.resume_new_invitations_total,
                 "acc_event_log": self._snap_deque(s.acc_event_log, s._deque_lock),
                 "apply_tests": s.apply_tests,
+                "safety_enabled": s.safety_enabled,
+                "safety_inconsistent_skipped": s.safety_inconsistent_skipped,
+                "safety_misleading_skipped": s.safety_misleading_skipped,
+                "safety_redirect_skipped": s.safety_redirect_skipped,
+                "safety_last_reason": s.safety_last_reason,
                 "consecutive_errors": s.consecutive_errors,
                 "url_stats": dict(s.url_stats),
                 "cookies_expired": s.cookies_expired,
@@ -1114,6 +1139,11 @@ class BotManager:
                     "resume_new_invitations_total": s.resume_new_invitations_total,
                     "acc_event_log": self._snap_deque(s.acc_event_log, s._deque_lock),
                     "apply_tests": s.apply_tests,
+                    "safety_enabled": s.safety_enabled,
+                    "safety_inconsistent_skipped": s.safety_inconsistent_skipped,
+                    "safety_misleading_skipped": s.safety_misleading_skipped,
+                    "safety_redirect_skipped": s.safety_redirect_skipped,
+                    "safety_last_reason": s.safety_last_reason,
                     "consecutive_errors": s.consecutive_errors,
                     "url_stats": dict(s.url_stats),
                     "cookies_expired": s.cookies_expired,
@@ -1172,6 +1202,11 @@ class BotManager:
                     "resume_global_invitations": 0, "resume_new_invitations_total": 0,
                     "acc_event_log": [],
                     "apply_tests": bool(ts.get("apply_tests", False)),
+                    "safety_enabled": bool(ts.get("safety_enabled", CONFIG.skip_inconsistent)),
+                    "safety_inconsistent_skipped": 0,
+                    "safety_misleading_skipped": 0,
+                    "safety_redirect_skipped": 0,
+                    "safety_last_reason": "",
                     "consecutive_errors": 0,
                     "url_stats": {},
                     "cookies_expired": False,
@@ -1651,6 +1686,7 @@ class BotManager:
             ]
 
             discard_skipped = 0
+            unsafe_skipped = 0
             for vid in unique_vacancies:
                 meta = state.vacancy_meta.get(vid, {})
                 title = (meta.get("title") or "").lower()
@@ -1658,6 +1694,21 @@ class BotManager:
                 if not title:
                     continue
                 if meta.get("archived"):
+                    continue
+                # Android requests these flags on resume-based searches. A
+                # misleading vacancy needs a human decision; an immediate
+                # redirect is an obsolete/duplicate vacancy shell.
+                if state.safety_enabled and meta.get("misleading_vacancy_alert"):
+                    unsafe_skipped += 1
+                    state.safety_misleading_skipped += 1
+                    state.safety_last_reason = f"{vid}: предупреждение HH о вакансии"
+                    continue
+                if state.safety_enabled and meta.get("immediate_redirect_vacancy_id"):
+                    unsafe_skipped += 1
+                    state.safety_redirect_skipped += 1
+                    state.safety_last_reason = (
+                        f"{vid}: redirect → {meta.get('immediate_redirect_vacancy_id')}"
+                    )
                     continue
                 if title_include_keywords and not any(k in title for k in title_include_keywords):
                     title_skipped += 1
@@ -1774,10 +1825,11 @@ class BotManager:
             sched_msg = f", \U0001f3e2 формат {schedule_skipped}" if CONFIG.allowed_schedules else ""
             title_msg = f", \U0001f3f7️ заголовок {title_skipped}" if title_skipped else ""
             discard_msg = f", \U0001f6ab отказали {discard_skipped}" if discard_skipped else ""
+            unsafe_msg = f", \u26a0\ufe0f сомнительные/redirect {unsafe_skipped}" if unsafe_skipped else ""
             rating_msg = f", ⭐ рейтинг {state.rating_skipped}" if state.rating_skipped else ""
             self._add_log(
                 state.short, state.color,
-                f"\U0001f50d Фильтрация: ✅ уже {already_count}, \U0001f9ea тест {test_count}{sal_msg}{sched_msg}{title_msg}{discard_msg}{rating_msg}, \U0001f195 новые {len(filtered)}",
+                f"\U0001f50d Фильтрация: ✅ уже {already_count}, \U0001f9ea тест {test_count}{sal_msg}{sched_msg}{title_msg}{discard_msg}{unsafe_msg}{rating_msg}, \U0001f195 новые {len(filtered)}",
                 "info",
             )
 
@@ -1932,15 +1984,18 @@ class BotManager:
                         break
 
                 # Pre-check: skip inconsistent vacancies if enabled
-                if CONFIG.skip_inconsistent:
+                if state.safety_enabled:
                     checked_batch = []
                     for vid in batch:
                         precheck = get_client(acc).check_vacancy_before_apply(vid)
                         if not precheck["ok"]:
+                            reason = precheck.get('reason') or ', '.join(precheck.get('hard_missing', []))
+                            state.safety_inconsistent_skipped += 1
+                            state.safety_last_reason = f"{vid}: {reason}"
                             meta = state.vacancy_meta.get(vid, {})
                             display_title = (meta.get("title") or vid)[:40]
                             self._add_log(state.short, state.color,
-                                f"⏭ {display_title}: пропуск ({precheck.get('reason') or ', '.join(precheck.get('hard_missing', []))})", "warning")
+                                f"⏭ {display_title}: пропуск ({reason})", "warning")
                         else:
                             if precheck.get("soft_missing"):
                                 self._add_log(state.short, state.color,
@@ -2391,6 +2446,7 @@ class BotManager:
         for url in effective_urls:
             pages = configured_pages
             text, area, query = parse_search_url(url)
+            query = _mobile_search_filters(query)
             ids_for_url: set = set()
             if state._deleted:
                 break
@@ -2420,6 +2476,11 @@ class BotManager:
                     meta_entry["published_at"] = it.get("published_at") or it.get("created_at") or ""
                     meta_entry["created_at"] = it.get("created_at") or ""
                     meta_entry["archived"] = bool(it.get("archived"))
+                    meta_entry["misleading_vacancy_alert"] = bool(it.get("misleading_vacancy_alert"))
+                    meta_entry["immediate_redirect_vacancy_id"] = str(
+                        it.get("immediate_redirect_vacancy_id") or ""
+                    )
+                    meta_entry["is_adv"] = bool(it.get("is_adv"))
                     sal = it.get("salary")
                     if isinstance(sal, dict):
                         salary_map[vid] = sal.get("from") or sal.get("to")

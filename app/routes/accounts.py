@@ -555,6 +555,27 @@ async def api_apply_tests(idx: int):
     return {"ok": False, "error": "Аккаунт не найден"}
 
 
+@router.post("/api/account/{idx}/safety_toggle")
+async def api_safety_toggle(idx: int):
+    """Переключить защитный preflight только для выбранного аккаунта."""
+    base = len(bot.account_states)
+    if 0 <= idx < base:
+        state = bot.account_states[idx]
+        state.safety_enabled = not state.safety_enabled
+        accounts_data[idx]["safety_enabled"] = state.safety_enabled
+        save_accounts()
+        return {"ok": True, "safety_enabled": state.safety_enabled}
+    ti = idx - base
+    state = bot.temp_states.get(ti)
+    if ti >= 0 and state:
+        state.safety_enabled = not state.safety_enabled
+        if ti < len(bot.temp_sessions):
+            bot.temp_sessions[ti]["safety_enabled"] = state.safety_enabled
+            save_browser_sessions(bot.temp_sessions)
+        return {"ok": True, "safety_enabled": state.safety_enabled}
+    return {"ok": False, "error": "Аккаунт не найден"}
+
+
 @router.post("/api/account/{idx}/degraded_fallback")
 async def api_degraded_fallback(idx: int):
     """Переключить degraded_fallback_enabled — при cookies_expired

@@ -1,6 +1,6 @@
 """HH Android-compatible OTP authentication and its local configuration.
 
-The HTTP contract is mirrored from the decompiled HH Android 26.29 client.  This
+The HTTP contract is mirrored from the decompiled HH Android 26.32 client.  This
 module deliberately does not try to turn OAuth credentials into browser cookies:
 the official OTP response contains tokens, not a hh.ru browser session.
 """
@@ -32,8 +32,8 @@ MASK = "********"
 SENSITIVE_KEYS = {"app_client_token", "oauth_client_secret"}
 DEFAULTS: dict[str, Any] = {
     "app_package": "ru.hh.android",
-    "app_version_name": "26.29",
-    "app_version_code": 11476,
+    "app_version_name": "26.32",
+    "app_version_code": 11480,
     "user_agent_template": "%s/%s.%d, Device: %s, Android OS: %s (UUID: %s)",
     "app_client_token": "K811HJNKQA8V1UN53I6PN1J1CMAD2L1M3LU6LPAU849BCT031KDSSM485FDPJ6UF",
     "oauth_client_id": "HIOMIAS39CA9DICTA7JIO64LQKQJF5AGIK74G9ITJKLNEDAOH5FHS5G1JI7FOEGD",
@@ -434,10 +434,16 @@ class HHMobileClient:
                     "Достигнут дневной лимит запросов кода. Повторите завтра.",
                     status_code=429, retry_after=_seconds_until_midnight(),
                 )
+            form = {"login": login}
+            if notification_type:
+                # Retrofit omits a nullable @Field.  Sending an empty string is
+                # observably different and can disable HH's automatic channel
+                # selection (SMS/call/email).
+                form["notification_type"] = notification_type
             payload = self._request(
                 "POST", f"one_time_password/{login_type}/generate",
                 params={"allow_multiaccount_creation": "false"},
-                data={"login": login, "notification_type": notification_type or ""},
+                data=form,
             )
             if not isinstance(payload, dict):
                 raise MobileAuthError("Неожиданный ответ HH")

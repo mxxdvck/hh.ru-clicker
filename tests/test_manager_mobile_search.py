@@ -1,6 +1,26 @@
 from types import SimpleNamespace
 
-from app.manager import BotManager, _uses_api_search, parse_search_url
+from app.manager import BotManager, _mobile_search_filters, _uses_api_search, parse_search_url
+
+
+def test_mobile_fresh_mode_requests_server_publication_order(monkeypatch):
+    monkeypatch.setattr("app.manager.CONFIG.fresh_vacancies_mode", True)
+    monkeypatch.setattr("app.manager.CONFIG.search_period_days", 3)
+
+    assert _mobile_search_filters({"experience": "between1And3"}) == {
+        "experience": "between1And3",
+        "order_by": "publication_time",
+        "period": 3,
+    }
+
+
+def test_mobile_search_keeps_explicit_order_and_omits_unsupported_period(monkeypatch):
+    monkeypatch.setattr("app.manager.CONFIG.fresh_vacancies_mode", True)
+    monkeypatch.setattr("app.manager.CONFIG.search_period_days", 14)
+
+    assert _mobile_search_filters({"order_by": "salary_desc"}) == {
+        "order_by": "salary_desc",
+    }
 
 
 def test_parse_search_url_preserves_resume_and_multivalue_filters():
@@ -58,7 +78,13 @@ def test_api_collector_routes_url_through_selected_client(monkeypatch):
     calls = []
     client = SimpleNamespace(
         search_vacancies=lambda *args, **kwargs: calls.append((args, kwargs)) or [
-            {"id": "42", "name": "Dev", "employer": {"id": "7", "name": "ACME"}}
+            {
+                "id": "42", "name": "Dev",
+                "employer": {"id": "7", "name": "ACME"},
+                "misleading_vacancy_alert": True,
+                "immediate_redirect_vacancy_id": "43",
+                "is_adv": True,
+            }
         ]
     )
     monkeypatch.setattr("app.manager.get_client", lambda account: client)
@@ -72,6 +98,9 @@ def test_api_collector_routes_url_through_selected_client(monkeypatch):
         "filters": {"schedule": "remote"},
         "max_pages": 1,
     })]
+    assert state.vacancy_meta["42"]["misleading_vacancy_alert"] is True
+    assert state.vacancy_meta["42"]["immediate_redirect_vacancy_id"] == "43"
+    assert state.vacancy_meta["42"]["is_adv"] is True
 
 
 def test_api_collector_uses_global_config_page_limit_not_stale_session_override(monkeypatch):

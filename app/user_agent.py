@@ -9,7 +9,7 @@ from app.logging_utils import log_debug
 
 
 DEFAULT_MOBILE_USER_AGENT = (
-    "ru.hh.android/26.29.11476, Device: Pixel 10, Android OS: 17 "
+    "ru.hh.android/26.32.11480, Device: Pixel 10, Android OS: 17 "
     "(UUID: 8f42e879-43c7-4d86-a671-31ea36ed924b)"
 )
 DEFAULT_WEBVIEW_USER_AGENT = (
@@ -19,7 +19,9 @@ DEFAULT_WEBVIEW_USER_AGENT = (
 
 DEVICE_MODELS = ["Pixel 8", "Pixel 9", "Pixel 10", "Samsung Galaxy S24", "Xiaomi 14"]
 ANDROID_RELEASES = ["13", "14", "15"]
-APP_VERSION_NAME = "26.28.1"
+# HH's Android User-Agent version segment contains both versionName and
+# versionCode (verified against ru.hh.android 26.32 / 11480).
+APP_VERSION_NAME = "26.32.11480"
 _identity_lock = threading.Lock()
 
 

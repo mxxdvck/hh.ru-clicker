@@ -36,6 +36,7 @@ from app import (
     hh_apply,
     hh_negotiations,
     mobile_apply,
+    mobile_auto_response,
     mobile_chat_actions,
     mobile_chat_list,
     mobile_chat_thread,
@@ -46,6 +47,7 @@ from app import (
     mobile_negotiations,
     mobile_precheck,
     mobile_questionnaire,
+    mobile_relevance,
     mobile_related,
     mobile_resume,
     mobile_resume_aggregate,
@@ -83,6 +85,23 @@ class MobileHHClient(HHClient):
     def start_hedi(self) -> str:
         """Start the mobile-only HH AI vacancy-search assistant."""
         return mobile_hedi.start_hedi(self.acc)
+
+    def fetch_auto_response_rules(self) -> list[dict]:
+        return mobile_auto_response.fetch_rules(self.acc)
+
+    def fetch_auto_response_statistics(self, rule_id: str, days: int = 7) -> dict:
+        return mobile_auto_response.fetch_statistics(self.acc, rule_id, days=days)
+
+    def create_auto_response_rule(self, resume_id: str,
+                                  filters: dict | None = None) -> dict:
+        return mobile_auto_response.create_rule(self.acc, resume_id, filters)
+
+    def update_auto_response_rule(self, rule_id: str, resume_id: str, *,
+                                  enabled: bool,
+                                  filters: dict | None = None) -> dict:
+        return mobile_auto_response.update_rule(
+            self.acc, rule_id, resume_id, enabled=enabled, filters=filters,
+        )
 
     # ── Phase 2: переговоры/чаты (реализовано: api.hh.ru, Bearer) ─────────────
     # Делегирование в app/mobile_*.py; транспорт — app/hh_mobile_transport.py
@@ -233,19 +252,17 @@ class MobileHHClient(HHClient):
                 "already_applied": "already"}.get(info["error_type"], "error"), info
 
     async def fill_questionnaire(self, vid: str, vacancy_title: str = "", company: str = "") -> tuple:
-        """Заполнение анкеты при отклике (phase 3).
-
-        web-only: в ABC метод помечен как web-only (web:
-        hh_apply.fill_and_submit_questionnaire), мобильной реализации пока не
-        планируется. Fallback-политика для mobile-аккаунтов (делегировать в
-        web-flow или оставить NotImplementedError) будет решена в Phase 3.
-        """
+        """Заполнить анкету через штатный Android WebView/autologin bridge."""
         return await mobile_questionnaire.fill_questionnaire(self.acc, vid, vacancy_title, company)
 
     def check_vacancy_before_apply(self, vid: str) -> dict:
         """Пре-проверка вакансии перед откликом (phase 3)."""
         return mobile_precheck.check_vacancy_before_apply(
             self.acc, vid, self.acc.get("resume_hash", ""))
+
+    def fetch_setka_relevance(self, vid: str) -> bool | None:
+        """Setka employee-referral relevance (not a resume match score)."""
+        return mobile_relevance.fetch_setka_relevance(self.acc, vid)
 
     def check_limit(self) -> bool:
         """Проверка дневного лимита откликов (phase 3)."""

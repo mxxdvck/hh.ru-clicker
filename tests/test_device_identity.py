@@ -28,4 +28,4 @@ def test_account_state_exposes_same_persistable_identity():
     state = AccountState(acc)
 
     assert state.device_identity is acc["device_identity"]
-    assert state.device_identity["app_version_name"] == "26.28.1"
+    assert state.device_identity["app_version_name"] == "26.32.11480"

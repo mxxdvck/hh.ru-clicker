@@ -28,7 +28,7 @@ from app.logging_utils import log_debug
 from app.user_agent import ensure_device_identity, mobile_user_agent
 
 MOBILE_BASE = "https://api.hh.ru"
-MOBILE_UA = "ru.hh.android/26.29.11476"
+MOBILE_UA = "ru.hh.android/26.32.11480"
 
 
 class MobileAPIError(Exception):

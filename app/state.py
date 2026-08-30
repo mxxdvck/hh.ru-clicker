@@ -134,6 +134,13 @@ class AccountState:
         self.acc_event_log: deque = deque(maxlen=8)
         # Skip vacancies that require tests
         self.apply_tests: bool = bool(acc_data.get("apply_tests", False))
+        self.safety_enabled: bool = bool(
+            acc_data.get("safety_enabled", CONFIG.skip_inconsistent)
+        )
+        self.safety_inconsistent_skipped: int = 0
+        self.safety_misleading_skipped: int = 0
+        self.safety_redirect_skipped: int = 0
+        self.safety_last_reason: str = ""
         # Consecutive errors counter for auto-pause
         self.consecutive_errors: int = 0
         # Per-URL vacancy counts from last collection cycle

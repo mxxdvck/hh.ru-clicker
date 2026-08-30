@@ -65,7 +65,7 @@ def test_effective_config_reads_files_once(isolated_mobile, monkeypatch):
 
 def test_defaults_and_user_agent(isolated_mobile):
     cfg, sources = ma.effective_config()
-    assert cfg.user_agent == "ru.hh.android/26.29.11476, Device: Pixel 10, Android OS: 17 (UUID: 8f42e879-43c7-4d86-a671-31ea36ed924b)"
+    assert cfg.user_agent == "ru.hh.android/26.32.11480, Device: Pixel 10, Android OS: 17 (UUID: 8f42e879-43c7-4d86-a671-31ea36ed924b)"
     assert set(sources.values()) == {"default"}
 
 
@@ -121,10 +121,23 @@ def test_request_and_login_persist_state_and_tokens(isolated_mobile):
     ])
     client = ma.HHMobileClient(session=session)
     client.request_code("test@example.com", "email")
+    assert session.calls[0][2]["data"] == {"login": "test@example.com"}
     assert ma.auth_status()["login_masked"] == "te***@example.com"
     tokens, me, resumes = client.login("1234")
     assert tokens["expires_at"] >= tokens["obtained_at"] + 60
     assert me["id"] == "user-1" and resumes[0]["id"] == "resume-1"
+
+
+def test_request_code_sends_explicit_notification_type(isolated_mobile):
+    session = FakeSession([FakeResponse(payload={"code_length": 4})])
+    client = ma.HHMobileClient(session=session)
+
+    client.request_code("test@example.com", "email", notification_type="email")
+
+    assert session.calls[0][2]["data"] == {
+        "login": "test@example.com",
+        "notification_type": "email",
+    }
 
 
 def test_bad_code_error_is_safe(isolated_mobile):

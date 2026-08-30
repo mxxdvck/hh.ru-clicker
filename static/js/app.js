@@ -288,7 +288,7 @@ const T = {
     smart_filter_low_comp: '<10 откликов',
     smart_filter_no_agency: 'Без агентств',
     smart_filter_auto_tests: 'Авто-тесты',
-    smart_filter_pre_check: 'Пре-чек опыта',
+    smart_filter_pre_check: 'Защитный пре-чек',
     smart_filter_freshness: 'Свежесть:',
     smart_filter_llm_interval: 'LLM каждые:',
     smart_filter_daily_limit: 'Лимит/день:',
@@ -556,7 +556,7 @@ const T = {
     smart_filter_low_comp: '<10 replies',
     smart_filter_no_agency: 'No agencies',
     smart_filter_auto_tests: 'Auto-tests',
-    smart_filter_pre_check: 'Pre-check experience',
+    smart_filter_pre_check: 'Safety pre-check',
     smart_filter_freshness: 'Freshness:',
     smart_filter_llm_interval: 'LLM every:',
     smart_filter_daily_limit: 'Daily limit:',
@@ -3471,7 +3471,8 @@ function renderHeader(snap) {
     if (snap.config.filter_agencies) badges.push('🏢 Без агентств');
     if (snap.config.filter_low_competition) badges.push('🎯 <10 откликов');
     if (snap.config.search_period_days > 0) badges.push(`📅 ${snap.config.search_period_days}д`);
-    if (snap.config.skip_inconsistent) badges.push('⚡ Пре-чек');
+    const protectedCount = (snap.accounts || []).filter(a => a.safety_enabled).length;
+    if (protectedCount) badges.push(`🛡️ Защита ${protectedCount}/${(snap.accounts || []).length}`);
     filterEl.innerHTML = badges.map(b => `<span style="background:rgba(57,208,216,0.12);color:var(--cyan);padding:1px 6px;border-radius:3px;font-size:9px">${b}</span>`).join(' ');
   }
 
@@ -3678,6 +3679,41 @@ function buildCardHTML(acc) {
         </div>
       </div>
     </details>
+    <details class="acc-letter-wrap" id="acc-auto-response-wrap-${acc.idx}"
+      ontoggle="if(this.open) autoResponseLoad(${acc.idx})">
+      <summary>🤖 Нативный автоотклик HH Pro</summary>
+      <div class="acc-letter-body" style="font-size:11px">
+        <input type="hidden" id="acc-ar-resume-${acc.idx}" value="${esc(acc.resume_hash || '')}">
+        <div id="acc-ar-status-${acc.idx}" style="color:var(--dim);margin-bottom:7px">
+          Откройте карточку для загрузки правил HH.
+        </div>
+        <div id="acc-ar-rules-${acc.idx}" style="margin-bottom:8px"></div>
+        <div style="border-top:1px solid var(--border);padding-top:7px">
+          <div style="color:var(--dim);margin-bottom:5px">Фильтры нового правила</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+            <input id="acc-ar-roles-${acc.idx}" class="apply-input" placeholder="ID профессий: 96, 10"
+              style="min-width:180px;flex:1;font-size:10px">
+            <select id="acc-ar-exp-${acc.idx}" class="apply-input" style="font-size:10px;width:auto">
+              <option value="">Любой опыт</option>
+              <option value="noExperience">Нет опыта</option>
+              <option value="between1And3">1–3 года</option>
+              <option value="between3And6">3–6 лет</option>
+              <option value="moreThan6">Более 6 лет</option>
+            </select>
+            <input id="acc-ar-salary-${acc.idx}" class="apply-input" type="number" min="0"
+              placeholder="Зарплата от" style="width:110px;font-size:10px">
+          </div>
+          <label style="display:flex;align-items:center;gap:5px;margin-bottom:7px;cursor:pointer">
+            <input id="acc-ar-only-salary-${acc.idx}" type="checkbox"> Только вакансии с зарплатой
+          </label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-sm" onclick="autoResponseCreate(${acc.idx},this)">＋ Создать правило</button>
+            <button class="btn-sm" onclick="autoResponseLoad(${acc.idx},true)">↻ Обновить</button>
+            <span style="color:var(--yellow)">Изменения выполняются на сервере HH</span>
+          </div>
+        </div>
+      </div>
+    </details>
     ${acc.temp ? (() => {
       // HH SSR отдаёт title как list of {string: "..."} — нормализуем
       const normTitle = (t) => {
@@ -3735,8 +3771,9 @@ function buildCardHTML(acc) {
           <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
             <input type="checkbox" class="smart-filter-cb" data-key="filter_agencies" style="accent-color:var(--yellow)"> 🏢 ${t('smart_filter_no_agency')}
           </label>
-          <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
-            <input type="checkbox" class="smart-filter-cb" data-key="skip_inconsistent" style="accent-color:var(--cyan)"> ⚡ ${t('smart_filter_pre_check')}
+          <label id="acc-safety-label-${acc.idx}" style="cursor:pointer;display:flex;align-items:center;gap:4px" title="Настройка только этого аккаунта: HH выбирает подходящее резюме; обязательные несовпадения, предупреждения о недостоверности и redirect-дубликаты пропускаются">
+            <input type="checkbox" id="acc-safety-cb-${acc.idx}" ${acc.safety_enabled ? 'checked' : ''}
+              onchange="safetyToggle(${acc.idx},this)" style="accent-color:var(--cyan)"> ⚡ ${t('smart_filter_pre_check')}
           </label>
           <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
             <input type="checkbox" class="smart-filter-cb" data-key="auto_apply_tests" style="accent-color:var(--magenta)"> 🧪 ${t('smart_filter_auto_tests')}
@@ -3757,7 +3794,7 @@ function buildCardHTML(acc) {
         <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:8px">
           <label style="display:flex;align-items:center;gap:4px">📅 ${t('smart_filter_freshness')}
             <select class="smart-filter-sel" data-key="search_period_days" style="font-size:10px;padding:1px 4px">
-              <option value="0">Все</option><option value="1">1д</option><option value="3">3д</option><option value="7">7д</option><option value="14">14д</option>
+              <option value="0">Все</option><option value="1">1д</option><option value="3">3д</option><option value="7">7д</option>
             </select>
           </label>
           <label style="display:flex;align-items:center;gap:4px">💬 ${t('smart_filter_llm_interval')}
@@ -3776,6 +3813,7 @@ function buildCardHTML(acc) {
           </label>
         </div>
         <div class="fresh-mode-summary" style="display:none;margin-bottom:7px;padding:5px 7px;border:1px solid rgba(34,197,94,.35);border-radius:5px;color:var(--green);font-size:10px"></div>
+        <div id="acc-safety-stats-${acc.idx}" style="display:none;margin-bottom:7px;padding:5px 7px;border:1px solid rgba(0,240,255,.3);border-radius:5px;color:var(--cyan);font-size:10px"></div>
         <div style="color:var(--dim);font-size:10px;line-height:1.5">
           💡 Из анализа 14К переговоров: удалёнка 74%, junior 78%, аналитик 100%, IT-аккред. только 17% интервью
         </div>
@@ -4154,6 +4192,24 @@ function updateCard(card, acc) {
   if (skipLabel) {
     if (acc.apply_tests) skipLabel.classList.add('active');
     else skipLabel.classList.remove('active');
+  }
+
+  // Per-account protective preflight and its session counters.
+  const safetyCb = document.getElementById('acc-safety-cb-' + acc.idx);
+  if (safetyCb) {
+    const localToggleAt = parseInt(safetyCb.dataset.localToggleAt || '0', 10);
+    if (Date.now() - localToggleAt > 2000) safetyCb.checked = !!acc.safety_enabled;
+  }
+  const safetyStats = document.getElementById('acc-safety-stats-' + acc.idx);
+  if (safetyStats) {
+    const mismatch = parseInt(acc.safety_inconsistent_skipped) || 0;
+    const misleading = parseInt(acc.safety_misleading_skipped) || 0;
+    const redirects = parseInt(acc.safety_redirect_skipped) || 0;
+    const total = mismatch + misleading + redirects;
+    safetyStats.style.display = acc.safety_enabled ? '' : 'none';
+    safetyStats.innerHTML = `🛡️ Защита активна · пропущено ${total}`
+      + ` (резюме ${mismatch}, предупреждения ${misleading}, redirect ${redirects})`
+      + (acc.safety_last_reason ? `<br><span style="color:var(--dim)">Последнее: ${esc(acc.safety_last_reason)}</span>` : '');
   }
 
   // Degraded-fallback checkbox (default ON — if field missing, treat as enabled)
@@ -6077,6 +6133,105 @@ async function loadViewHistory(idx) {
   }
 }
 
+function autoResponseFilters(idx) {
+  const splitIds = (id) => ((document.getElementById(id)?.value || '').split(',')
+    .map(v => v.trim()).filter(Boolean));
+  const filters = {};
+  const roles = splitIds(`acc-ar-roles-${idx}`);
+  const experience = document.getElementById(`acc-ar-exp-${idx}`)?.value || '';
+  const salary = parseInt(document.getElementById(`acc-ar-salary-${idx}`)?.value || '0', 10);
+  const onlySalary = !!document.getElementById(`acc-ar-only-salary-${idx}`)?.checked;
+  if (roles.length) filters.professional_roles = roles;
+  if (experience) filters.experience = experience;
+  if (salary > 0) filters.salary = {currency_code: 'RUR', from: salary};
+  if (onlySalary) filters.only_with_salary = true;
+  return filters;
+}
+
+async function autoResponseLoad(idx, force) {
+  const status = document.getElementById(`acc-ar-status-${idx}`);
+  const rulesEl = document.getElementById(`acc-ar-rules-${idx}`);
+  if (!status || !rulesEl) return;
+  if (!force && status.dataset.loaded === '1') return;
+  status.textContent = '⏳ Загружаю правила и статистику…';
+  try {
+    const res = await fetch(`/api/account/${idx}/auto_response`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const rules = Array.isArray(data.rules) ? data.rules : [];
+    status.dataset.loaded = '1';
+    status.textContent = rules.length
+      ? `Найдено правил: ${rules.length}`
+      : 'Правил пока нет. Создание может требовать подписку HH Pro.';
+    rulesEl.innerHTML = rules.map(rule => {
+      const id = String(rule.auto_response_id || rule.id || '');
+      const enabled = rule.enabled === true;
+      const stats = (data.statistics || {})[id] || {};
+      const counters = stats.counters || {};
+      const total = Number(counters.total || 0);
+      const invites = Number(counters.invitation || 0);
+      const viewed = Number(counters.vacancy_from_search_count || 0);
+      const encodedId = esc(encodeURIComponent(id));
+      return `<div style="padding:7px;border:1px solid var(--border);border-radius:5px;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <b style="color:${enabled ? 'var(--green)' : 'var(--dim)'}">${enabled ? '● Включён' : '○ Выключен'}</b>
+          <button class="btn-sm" onclick="autoResponseToggle(${idx},'${encodedId}',${enabled ? 'false' : 'true'},this)">
+            ${enabled ? '⏸ Выключить' : '▶ Включить'}
+          </button>
+        </div>
+        <div style="color:var(--dim);margin-top:4px">За 7 дней: откликов <b>${total}</b> · приглашений <b>${invites}</b> · вакансий <b>${viewed}</b></div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    status.dataset.loaded = '';
+    status.textContent = `❌ ${e.message || 'Ошибка загрузки'}`;
+    rulesEl.innerHTML = '';
+  }
+}
+
+async function autoResponseCreate(idx, btn) {
+  const resumeId = document.getElementById(`acc-ar-resume-${idx}`)?.value || '';
+  if (!resumeId) { alert('Сначала выберите резюме в карточке аккаунта'); return; }
+  if (!confirm('Создать серверное правило автоотклика HH для выбранного резюме?')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/account/${idx}/auto_response`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: true, resume_id: resumeId, filters: autoResponseFilters(idx)}),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const status = document.getElementById(`acc-ar-status-${idx}`);
+    if (status) status.dataset.loaded = '';
+    await autoResponseLoad(idx, true);
+  } catch (e) {
+    alert(`Не удалось создать правило: ${e.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function autoResponseToggle(idx, encodedRuleId, enabled, btn) {
+  const action = enabled ? 'включить' : 'выключить';
+  if (!confirm(`Точно ${action} серверный автоотклик HH?`)) return;
+  const resumeId = document.getElementById(`acc-ar-resume-${idx}`)?.value || '';
+  const ruleId = decodeURIComponent(encodedRuleId);
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/account/${idx}/auto_response/${encodeURIComponent(ruleId)}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: true, resume_id: resumeId, enabled: !!enabled}),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    await autoResponseLoad(idx, true);
+  } catch (e) {
+    alert(`Не удалось ${action} автоотклик: ${e.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function declineDiscards(idx, btn) {
   if (!btn) return;
   btn.disabled = true;
@@ -6103,6 +6258,17 @@ async function applyTestsToggle(idx, cb) {
       if (data.apply_tests) label.classList.add('active');
       else label.classList.remove('active');
     }
+  } catch(e) {
+    cb.checked = !cb.checked;
+  }
+}
+
+async function safetyToggle(idx, cb) {
+  cb.dataset.localToggleAt = String(Date.now());
+  try {
+    const res = await fetch(`/api/account/${idx}/safety_toggle`, {method:'POST'});
+    const data = await res.json();
+    if (!res.ok || !data.ok) cb.checked = !cb.checked;
   } catch(e) {
     cb.checked = !cb.checked;
   }

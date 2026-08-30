@@ -188,6 +188,7 @@ from app.routes.hedi import router as hedi_router          # noqa: E402
 from app.routes.ui_skills import router as ui_skills_router    # noqa: E402
 from app.routes.ui_reviews import router as ui_reviews_router  # noqa: E402
 from app.routes.mobile_auth import router as mobile_auth_router  # noqa: E402
+from app.routes.auto_response import router as auto_response_router  # noqa: E402
 
 app.include_router(core_router)
 app.include_router(accounts_router)
@@ -209,3 +210,4 @@ app.include_router(hedi_router)
 app.include_router(ui_skills_router)
 app.include_router(ui_reviews_router)
 app.include_router(mobile_auth_router)
+app.include_router(auto_response_router)

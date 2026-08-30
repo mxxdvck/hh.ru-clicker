@@ -59,6 +59,27 @@ def test_frontend_reindexes_and_resyncs_account_controls():
     assert "HediState.idx = null" in hedi
 
 
+def test_safety_toggle_is_per_account_and_persisted(monkeypatch):
+    old_accounts = list(accounts_data)
+    old_states = list(bot.account_states)
+    first, second = _State("first"), _State("second")
+    first.safety_enabled = False
+    second.safety_enabled = False
+    accounts_data[:] = [dict(first.acc), dict(second.acc)]
+    bot.account_states[:] = [first, second]
+    monkeypatch.setattr(account_routes, "save_accounts", lambda: None)
+    try:
+        result = asyncio.run(account_routes.api_safety_toggle(0))
+        assert result == {"ok": True, "safety_enabled": True}
+        assert first.safety_enabled is True
+        assert second.safety_enabled is False
+        assert accounts_data[0]["safety_enabled"] is True
+        assert "safety_enabled" not in accounts_data[1]
+    finally:
+        accounts_data[:] = old_accounts
+        bot.account_states[:] = old_states
+
+
 def test_card_delete_removes_runtime_state_and_recent_rows(monkeypatch):
     old_accounts = list(accounts_data)
     old_states = list(bot.account_states)
