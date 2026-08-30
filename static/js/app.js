@@ -203,6 +203,7 @@ const T = {
     smart_filter_skip_auto_resp: 'Без auto-feed',
     smart_filter_quick_resp: 'Quick-response в начало',
     smart_filter_it_only: 'Только IT-аккредитация',
+    smart_filter_fresh_reserve: 'Резерв для свежих',
     lbl_auto_pause_errors: 'Авто-пауза при ошибках',
     hint_auto_pause_errors: 'Авто-пауза аккаунта после N ошибок подряд (0 = выключено)',
     // Settings sections
@@ -470,6 +471,7 @@ const T = {
     smart_filter_skip_auto_resp: 'No auto-feed',
     smart_filter_quick_resp: 'Quick-response first',
     smart_filter_it_only: 'IT-accredited only',
+    smart_filter_fresh_reserve: 'Reserve for fresh vacancies',
     lbl_auto_pause_errors: 'Auto-pause on errors',
     hint_auto_pause_errors: 'Auto-pause account after N consecutive errors (0 = disabled)',
     // Settings sections
@@ -3748,6 +3750,9 @@ function buildCardHTML(acc) {
           <label style="cursor:pointer;display:flex;align-items:center;gap:4px" title="Только аккредитованные IT-работодатели">
             <input type="checkbox" class="smart-filter-cb" data-key="accredited_it_only" style="accent-color:var(--cyan)"> 💻 ${t('smart_filter_it_only')}
           </label>
+          <label style="cursor:pointer;display:flex;align-items:center;gap:4px" title="Старые вакансии не расходуют защищённый остаток дневного лимита">
+            <input type="checkbox" class="smart-filter-cb" data-key="fresh_vacancies_mode" style="accent-color:var(--green)"> 🆕 ${t('smart_filter_fresh_reserve')}
+          </label>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:8px">
           <label style="display:flex;align-items:center;gap:4px">📅 ${t('smart_filter_freshness')}
@@ -3763,7 +3768,14 @@ function buildCardHTML(acc) {
           <label style="display:flex;align-items:center;gap:4px">🛑 ${t('smart_filter_daily_limit')}
             <input type="number" class="smart-filter-num" data-key="daily_apply_limit" min="0" max="500" style="width:50px;font-size:10px;padding:1px 4px" placeholder="0">
           </label>
+          <label style="display:flex;align-items:center;gap:4px">🕐 Свежая ≤
+            <input type="number" class="smart-filter-num" data-key="fresh_vacancy_hours" min="1" max="168" style="width:44px;font-size:10px;padding:1px 4px" placeholder="24">ч
+          </label>
+          <label style="display:flex;align-items:center;gap:4px">🛡️ Резерв
+            <input type="number" class="smart-filter-num" data-key="fresh_apply_reserve" min="0" max="200" style="width:44px;font-size:10px;padding:1px 4px" placeholder="50">
+          </label>
         </div>
+        <div class="fresh-mode-summary" style="display:none;margin-bottom:7px;padding:5px 7px;border:1px solid rgba(34,197,94,.35);border-radius:5px;color:var(--green);font-size:10px"></div>
         <div style="color:var(--dim);font-size:10px;line-height:1.5">
           💡 Из анализа 14К переговоров: удалёнка 74%, junior 78%, аналитик 100%, IT-аккред. только 17% интервью
         </div>
@@ -4236,6 +4248,21 @@ function updateCard(card, acc) {
 
   // Smart filters sync (global config → card checkboxes)
   const cfg = State.lastSnapshot?.config || {};
+  const freshSummary = card.querySelector('.fresh-mode-summary');
+  if (freshSummary) {
+    const enabled = cfg.fresh_vacancies_mode === true;
+    freshSummary.style.display = enabled ? '' : 'none';
+    if (enabled) {
+      const hours = Math.max(parseInt(cfg.fresh_vacancy_hours) || 24, 1);
+      const reserve = Math.max(parseInt(cfg.fresh_apply_reserve) || 0, 0);
+      const ceiling = Math.min(
+        ...[parseInt(cfg.daily_apply_limit), parseInt(cfg.hh_daily_limit) || 200].filter(v => v > 0)
+      );
+      const oldCeiling = Math.max(ceiling - Math.min(reserve, ceiling), 0);
+      const used = Math.max(parseInt(acc.daily_sent) || 0, parseInt(acc.hh_today_applies) || 0);
+      freshSummary.textContent = `🟢 Свежие ≤${hours}ч идут первыми · резерв ${reserve} · использовано ${used}/${ceiling} · старым до ${oldCeiling}`;
+    }
+  }
   card.querySelectorAll('.smart-filter-cb').forEach(cb => {
     const key = cb.dataset.key;
     if (cfg[key] !== undefined) cb.checked = cfg[key];

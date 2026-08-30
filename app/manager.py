@@ -1227,6 +1227,7 @@ class BotManager:
                 "auto_apply_tests": CONFIG.auto_apply_tests,
                 "use_oauth_apply": CONFIG.use_oauth_apply,
                 "daily_apply_limit": CONFIG.daily_apply_limit,
+                "hh_daily_limit": CONFIG.hh_daily_limit,
                 "fresh_vacancies_mode": CONFIG.fresh_vacancies_mode,
                 "fresh_vacancy_hours": CONFIG.fresh_vacancy_hours,
                 "fresh_apply_reserve": CONFIG.fresh_apply_reserve,
