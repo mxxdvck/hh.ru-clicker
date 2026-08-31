@@ -3714,6 +3714,20 @@ function buildCardHTML(acc) {
         </div>
       </div>
     </details>
+    <details class="acc-letter-wrap" id="acc-career-wrap-${acc.idx}"
+      ontoggle="if(this.open) careerRadarLoad(${acc.idx})">
+      <summary>📈 Карьерный радар</summary>
+      <div class="acc-letter-body" id="acc-career-body-${acc.idx}" style="font-size:11px;color:var(--dim)">
+        Откройте для загрузки зарплат и динамики вакансий HH.
+      </div>
+    </details>
+    <details class="acc-letter-wrap" id="acc-visibility-wrap-${acc.idx}"
+      ontoggle="if(this.open) resumeVisibilityLoad(${acc.idx})">
+      <summary>👁️ Видимость резюме <span id="acc-visibility-chip-${acc.idx}" style="font-size:10px"></span></summary>
+      <div class="acc-letter-body" id="acc-visibility-body-${acc.idx}" style="font-size:11px;color:var(--dim)">
+        Откройте для проверки, кто видит выбранное резюме.
+      </div>
+    </details>
     ${acc.temp ? (() => {
       // HH SSR отдаёт title как list of {string: "..."} — нормализуем
       const normTitle = (t) => {
@@ -6229,6 +6243,64 @@ async function autoResponseToggle(idx, encodedRuleId, enabled, btn) {
     alert(`Не удалось ${action} автоотклик: ${e.message || e}`);
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+function _radarBars(items, valueKey, suffix='') {
+  if (!Array.isArray(items) || !items.length) return '<span style="color:var(--dim)">Нет данных</span>';
+  const rows = items.filter(x => x && Number.isFinite(Number(x[valueKey])));
+  const max = Math.max(...rows.map(x => Number(x[valueKey])), 1);
+  return rows.map(x => {
+    const value = Number(x[valueKey]);
+    const width = Math.max(4, Math.round(value / max * 100));
+    return `<div style="display:grid;grid-template-columns:36px 1fr auto;gap:6px;align-items:center;margin:3px 0">`
+      + `<span>${esc(String(x.year || '—'))}</span>`
+      + `<span style="height:6px;background:rgba(0,240,255,.12);border-radius:4px;overflow:hidden"><i style="display:block;width:${width}%;height:100%;background:var(--cyan)"></i></span>`
+      + `<b style="color:var(--fg)">${value.toLocaleString('ru')}${suffix}</b></div>`;
+  }).join('');
+}
+
+async function careerRadarLoad(idx, force=false) {
+  const body = document.getElementById('acc-career-body-' + idx);
+  if (!body || (body.dataset.loaded && !force)) return;
+  body.textContent = '⏳ Загружаю карьерную статистику HH…';
+  try {
+    const res = await fetch(`/api/account/${idx}/career_radar`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Недоступно');
+    body.dataset.loaded = '1';
+    body.innerHTML = `<div style="color:var(--cyan);font-weight:700;margin-bottom:7px">${esc(data.profession || 'Профессия')} · ${esc(data.grade || 'грейд не указан')}</div>`
+      + `<div style="color:var(--dim);margin:6px 0 3px">Средняя зарплата по годам</div>${_radarBars(data.salary,'salary',' ₽')}`
+      + `<div style="color:var(--dim);margin:8px 0 3px">Количество вакансий</div>${_radarBars(data.vacancies,'vacancy_count')}`
+      + `<button class="btn-sm" style="margin-top:7px" onclick="careerRadarLoad(${idx},true)">↻ Обновить</button>`;
+  } catch(e) {
+    body.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`;
+  }
+}
+
+async function resumeVisibilityLoad(idx, force=false) {
+  const body = document.getElementById('acc-visibility-body-' + idx);
+  const chip = document.getElementById('acc-visibility-chip-' + idx);
+  if (!body || (body.dataset.loaded && !force)) return;
+  body.textContent = '⏳ Проверяю видимость резюме…';
+  try {
+    const res = await fetch(`/api/account/${idx}/resume_visibility`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Недоступно');
+    body.dataset.loaded = '1';
+    const active = data.active || {};
+    const color = data.warning ? 'var(--red)' : 'var(--green)';
+    if (chip) { chip.textContent = data.warning ? '⚠️ ограничено' : '✅ открыто'; chip.style.color = color; }
+    const variants = (data.access_types || []).map(x =>
+      `<div style="padding:3px 5px;margin:2px 0;border-left:2px solid ${x.active ? color : 'var(--border)'};color:${x.active ? 'var(--fg)' : 'var(--dim)'}">${x.active ? '● ' : '○ '}${esc(x.name || x.id || '—')}</div>`
+    ).join('');
+    body.innerHTML = `<div style="color:${color};font-weight:700;margin-bottom:6px">${data.warning ? '⚠️ Проверьте ограничения: ' : '✅ Активная видимость: '}${esc(active.name || active.id || 'не определена')}</div>`
+      + variants
+      + `<div style="margin-top:7px;color:var(--dim)">Чёрный список: <b>${data.blacklist_total || 0}</b> · Белый список: <b>${data.whitelist_total || 0}</b></div>`
+      + `<div style="margin-top:5px;color:var(--yellow)">Изменение видимости выполняйте осознанно в HH; эта панель только проверяет состояние.</div>`
+      + `<button class="btn-sm" style="margin-top:7px" onclick="resumeVisibilityLoad(${idx},true)">↻ Обновить</button>`;
+  } catch(e) {
+    body.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`;
   }
 }
 
