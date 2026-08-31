@@ -1904,7 +1904,8 @@ class BotManager:
             i = 0
 
             while i < len(filtered):
-                if self._stop_event.is_set() or self.paused or state.paused or state.limit_exceeded:
+                if (self._stop_event.is_set() or self.paused or state.paused
+                        or state.limit_exceeded or getattr(state, "_deleted", False)):
                     break
 
                 batch = filtered[i: i + batch_size]
@@ -1988,6 +1989,8 @@ class BotManager:
                 if state.safety_enabled:
                     checked_batch = []
                     for vid in batch:
+                        if state.paused or getattr(state, "_deleted", False):
+                            break
                         precheck = get_client(acc).check_vacancy_before_apply(vid)
                         if not precheck["ok"]:
                             reason = precheck.get('reason') or ', '.join(precheck.get('hard_missing', []))
@@ -2046,6 +2049,8 @@ class BotManager:
                     # OAuth: synchronous, one by one (API doesn't support batch)
                     results = []
                     for vid in batch:
+                        if state.paused or getattr(state, "_deleted", False):
+                            break
                         try:
                             result = _oauth_apply(acc, vid, acc.get("letter", ""))
                             results.append(result)
@@ -2068,7 +2073,7 @@ class BotManager:
                 for j, (vid, result_data) in enumerate(zip(batch, results)):
                     # Если auto-pause сработал на предыдущей итерации —
                     # не продолжаем отправлять оставшиеся вакансии (swarm-12 #10).
-                    if state.paused or state.hard_stopped:
+                    if state.paused or state.hard_stopped or getattr(state, "_deleted", False):
                         break
                     # Любая итерация — это попытка отклика. Запоминаем время,
                     # чтобы UI мог показать «бот живой, последний раз пробовал

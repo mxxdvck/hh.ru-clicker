@@ -230,6 +230,26 @@ def test_temp_session_pending_shows_launch_controls(ui):
     expect(ui.page.locator("#acc-resume-sel-0")).to_contain_text("Backend-разработчик")
 
 
+def test_temp_session_card_rebuilds_when_stopped(ui):
+    """После backend snapshot bot_active=false кнопка Стоп сменяется на Запустить."""
+    acc = _account(
+        idx=0, name="temp_session_1", temp=True, bot_active=True,
+        resume_hash="deadbeef01",
+    )
+    _install_state(ui, _state(accounts=[acc]))
+    ui.open()
+
+    card = ui.page.locator("#card-0")
+    expect(card.locator(".acc-actions button", has_text="Стоп")).to_have_count(1)
+    expect(card.locator(".acc-actions button", has_text="Запустить")).to_have_count(0)
+
+    ui.state["accounts"][0]["bot_active"] = False
+    ui.push_state()
+
+    expect(card.locator(".acc-actions button", has_text="Стоп")).to_have_count(0)
+    expect(card.locator(".acc-actions button", has_text="Запустить")).to_have_count(1)
+
+
 def test_pause_button_sends_pause_toggle(ui):
     """Клик #pause-btn → WS-команда {"type":"pause_toggle"}."""
     _install_state(ui, _state(accounts=[_account(idx=0)]))

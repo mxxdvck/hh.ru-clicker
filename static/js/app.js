@@ -3549,7 +3549,9 @@ function renderAccounts(snap) {
   });
   snap.accounts.forEach(acc => {
     let card = document.getElementById('card-' + acc.idx);
-    const identity = `${acc.temp ? 't' : 'r'}|${acc.resume_hash || ''}|${acc.name || acc.short || ''}`;
+    // Действия временной сессии зависят от bot_active (Стоп/Запустить).
+    // Перестраиваем карточку при смене состояния, иначе старая кнопка остаётся.
+    const identity = `${acc.temp ? 't' : 'r'}|${acc.resume_hash || ''}|${acc.name || acc.short || ''}|${acc.temp ? Boolean(acc.bot_active) : ''}`;
     if (card && card.dataset.accountIdentity !== identity) {
       card.remove();
       card = null;
@@ -5205,6 +5207,7 @@ async function sessionActivate(idx, btn) {
       if (btn) { btn.disabled = false; btn.textContent = '▶ Запустить'; }
       return;
     }
+    setSessionActiveInCurrentSnapshot(idx, true);
     // Snapshot will redraw the card. Keep the button disabled meanwhile to
     // prevent a second activation request racing the first one.
   } catch (e) {
@@ -5218,15 +5221,33 @@ async function sessionDeactivate(idx, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Стоп…'; }
   try {
     const res = await fetch('/api/session/' + idx + '/deactivate', {method: 'POST'});
-    const data = await res.json();
-    if (data.status !== 'ok') {
-      alert('Ошибка: ' + data.message);
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch (_) {}
+    if (!res.ok || data.status !== 'ok') {
+      alert('Ошибка: ' + (data.message || data.error || data.detail || text || `HTTP ${res.status}`));
       if (btn) { btn.disabled = false; btn.textContent = '🛑 Стоп'; }
+      return;
     }
+    setSessionActiveInCurrentSnapshot(idx, false);
   } catch (e) {
     alert('Сетевая ошибка: ' + e);
     if (btn) { btn.disabled = false; btn.textContent = '🛑 Стоп'; }
   }
+}
+
+function setSessionActiveInCurrentSnapshot(idx, active) {
+  const snap = State.lastSnapshot;
+  if (!snap || !Array.isArray(snap.accounts)) return;
+  const acc = snap.accounts.find(a => Number(a.idx) === Number(idx));
+  if (!acc || !acc.temp) return;
+  acc.bot_active = Boolean(active);
+  if (!active) {
+    acc.paused = false;
+    acc.status = '—';
+    acc.status_detail = '';
+  }
+  renderAll(snap);
 }
 
 // ── Apply Tab ────────────────────────────────────────────────
