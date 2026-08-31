@@ -3728,6 +3728,22 @@ function buildCardHTML(acc) {
         Откройте для проверки, кто видит выбранное резюме.
       </div>
     </details>
+    <details class="acc-letter-wrap" ontoggle="if(this.open) autosearchesLoad(${acc.idx})">
+      <summary>🔎 Автопоиски HH</summary>
+      <div class="acc-letter-body" id="acc-autosearches-${acc.idx}" style="font-size:11px;color:var(--dim)">Откройте для загрузки.</div>
+    </details>
+    <details class="acc-letter-wrap" ontoggle="if(this.open) hiddenItemsLoad(${acc.idx})">
+      <summary>🚫 Скрытые вакансии и работодатели</summary>
+      <div class="acc-letter-body" id="acc-hidden-${acc.idx}" style="font-size:11px;color:var(--dim)">Откройте для загрузки.</div>
+    </details>
+    <details class="acc-letter-wrap" ontoggle="if(this.open) bellNotificationsLoad(${acc.idx})">
+      <summary>🔔 Уведомления HH</summary>
+      <div class="acc-letter-body" id="acc-bell-${acc.idx}" style="font-size:11px;color:var(--dim)">Откройте для загрузки.</div>
+    </details>
+    <details class="acc-letter-wrap" ontoggle="if(this.open) conversionLoad(${acc.idx})">
+      <summary>🎯 Конверсия откликов</summary>
+      <div class="acc-letter-body" id="acc-conversion-${acc.idx}" style="font-size:11px;color:var(--dim)">Откройте для расчёта.</div>
+    </details>
     ${acc.temp ? (() => {
       // HH SSR отдаёт title как list of {string: "..."} — нормализуем
       const normTitle = (t) => {
@@ -6302,6 +6318,98 @@ async function resumeVisibilityLoad(idx, force=false) {
   } catch(e) {
     body.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`;
   }
+}
+
+function _itemLabel(item) {
+  if (!item || typeof item !== 'object') return '—';
+  const employer = item.employer && (item.employer.name || item.employer.id);
+  return item.name || item.title || item.employer_name || employer || item.text || item.id || '—';
+}
+
+async function autosearchesLoad(idx, force=false) {
+  const el = document.getElementById('acc-autosearches-' + idx);
+  if (!el || (el.dataset.loaded && !force)) return;
+  el.textContent = '⏳ Загружаю автопоиски…';
+  try {
+    const d = await (await fetch(`/api/account/${idx}/autosearches`)).json();
+    if (!d.ok) throw new Error(d.error || 'Недоступно');
+    el.dataset.loaded = '1';
+    const items = d.items || [];
+    el.innerHTML = items.length ? items.map(x => `<div style="padding:6px;border-bottom:1px solid var(--border)">
+      <div><b>${esc(x.name || 'Без названия')}</b> <span style="color:var(--green)">+${Number(x.new_count)||0} новых</span></div>
+      <div style="display:flex;gap:5px;margin-top:4px">
+        <button class="btn-sm" onclick="autosearchRename(${idx},'${esc(String(x.id||''))}')">✏️ Имя</button>
+        <button class="btn-sm" onclick="autosearchSubscription(${idx},'${esc(String(x.id||''))}',${x.email_subscription !== false})">✉️ Подписка</button>
+        <button class="btn-sm" style="color:var(--red)" onclick="autosearchDelete(${idx},'${esc(String(x.id||''))}')">🗑</button>
+      </div></div>`).join('') : 'Сохранённых поисков нет.';
+  } catch(e) { el.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
+}
+
+async function autosearchRename(idx, id) {
+  const name = prompt('Новое название автопоиска:');
+  if (!name) return;
+  const d = await (await fetch(`/api/account/${idx}/autosearches/${encodeURIComponent(id)}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+  if (!d.ok) return alert(d.error || 'Ошибка HH');
+  autosearchesLoad(idx,true);
+}
+
+async function autosearchSubscription(idx, id, enabled) {
+  if (!confirm(`${enabled ? 'Отключить' : 'Включить'} email-подписку этого автопоиска?`)) return;
+  const d = await (await fetch(`/api/account/${idx}/autosearches/${encodeURIComponent(id)}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({email_subscription:!enabled})})).json();
+  if (!d.ok) return alert(d.error || 'Ошибка HH');
+  autosearchesLoad(idx,true);
+}
+
+async function autosearchDelete(idx, id) {
+  if (!confirm('Удалить этот автопоиск из HH? Отменить действие автоматически нельзя.')) return;
+  const d = await (await fetch(`/api/account/${idx}/autosearches/${encodeURIComponent(id)}`, {method:'DELETE'})).json();
+  if (!d.ok) return alert(d.error || 'Ошибка HH');
+  autosearchesLoad(idx,true);
+}
+
+async function hiddenItemsLoad(idx, force=false) {
+  const el = document.getElementById('acc-hidden-' + idx);
+  if (!el || (el.dataset.loaded && !force)) return;
+  el.textContent = '⏳ Загружаю скрытые списки…';
+  try {
+    const d = await (await fetch(`/api/account/${idx}/hidden`)).json();
+    if (!d.ok) throw new Error(d.error || 'Недоступно');
+    el.dataset.loaded = '1';
+    const section = (title, kind, items, total) => `<div style="color:var(--cyan);margin:6px 0">${title}: ${total}</div>` +
+      ((items||[]).map(x => `<div style="display:flex;justify-content:space-between;gap:6px;padding:4px;border-bottom:1px solid var(--border)"><span>${esc(_itemLabel(x))}</span><button class="btn-sm" onclick="hiddenRestore(${idx},'${kind}','${esc(String(x.id || x.vacancy_id || x.employer_id || ''))}')">↩ Вернуть</button></div>`).join('') || '<span style="color:var(--dim)">Список пуст</span>');
+    el.innerHTML = section('Вакансии','vacancy',d.vacancies,d.vacancies_total) + section('Работодатели','employer',d.employers,d.employers_total);
+  } catch(e) { el.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
+}
+
+async function hiddenRestore(idx, kind, id) {
+  if (!id || !confirm('Вернуть этот объект из скрытого списка HH?')) return;
+  const d = await (await fetch(`/api/account/${idx}/hidden/${kind}/${encodeURIComponent(id)}`, {method:'DELETE'})).json();
+  if (!d.ok) return alert(d.error || 'Ошибка HH');
+  hiddenItemsLoad(idx,true);
+}
+
+async function bellNotificationsLoad(idx, force=false) {
+  const el = document.getElementById('acc-bell-' + idx);
+  if (!el || (el.dataset.loaded && !force)) return;
+  el.textContent = '⏳ Загружаю уведомления…';
+  try {
+    const d = await (await fetch(`/api/account/${idx}/bell_notifications`)).json();
+    if (!d.ok) throw new Error(d.error || 'Недоступно');
+    el.dataset.loaded = '1';
+    const items = d.notifications || [];
+    el.innerHTML = items.length ? items.slice(0,30).map(x => `<div style="padding:5px;border-bottom:1px solid var(--border);color:${x.viewed ? 'var(--dim)' : 'var(--fg)'}">${esc(_itemLabel(x))}</div>`).join('') : 'Новых уведомлений нет.';
+  } catch(e) { el.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
+}
+
+async function conversionLoad(idx) {
+  const el = document.getElementById('acc-conversion-' + idx);
+  if (!el) return;
+  el.textContent = '⏳ Считаю…';
+  try {
+    const d = await (await fetch(`/api/account/${idx}/conversion`)).json();
+    if (!d.ok) throw new Error(d.error || 'Недоступно');
+    el.innerHTML = `<div style="display:flex;gap:18px;align-items:end"><div><b style="font-size:22px;color:var(--cyan)">${d.conversion_percent}%</b><br>конверсия</div><div><b>${d.applied}</b><br>откликов</div><div><b style="color:var(--green)">${d.interviews}</b><br>интервью</div></div>`;
+  } catch(e) { el.innerHTML = `<span style="color:var(--red)">❌ ${esc(e.message)}</span>`; }
 }
 
 async function declineDiscards(idx, btn) {

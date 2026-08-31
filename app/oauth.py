@@ -735,6 +735,9 @@ def fetch_saved_vacancy_searches(acc: dict) -> list:
                     "name": it.get("name", "") or "—",
                     "items_url": it.get("items", {}).get("url", "") or it.get("url", ""),
                     "new_count": int(it.get("new_items", {}).get("count", 0) or 0),
+                    "email_subscription": bool(
+                        it.get("email_subscription", it.get("subscription", True))
+                    ),
                 })
             if page + 1 >= d.get("pages", 0):
                 break

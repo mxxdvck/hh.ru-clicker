@@ -190,6 +190,7 @@ from app.routes.ui_reviews import router as ui_reviews_router  # noqa: E402
 from app.routes.mobile_auth import router as mobile_auth_router  # noqa: E402
 from app.routes.auto_response import router as auto_response_router  # noqa: E402
 from app.routes.career_visibility import router as career_visibility_router  # noqa: E402
+from app.routes.discovery import router as discovery_router  # noqa: E402
 
 app.include_router(core_router)
 app.include_router(accounts_router)
@@ -213,3 +214,4 @@ app.include_router(ui_reviews_router)
 app.include_router(mobile_auth_router)
 app.include_router(auto_response_router)
 app.include_router(career_visibility_router)
+app.include_router(discovery_router)
