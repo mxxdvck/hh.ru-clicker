@@ -113,7 +113,20 @@ async def api_vacancy_hr_activity(id: str, account_idx: int = 0):
 
     stats, err = await loop.run_in_executor(None, _fetch_employer_stats, token, id)
     if err is not None:
-        return _err(502, err)
+        # Endpoint закрыт/недоступен для части вакансий. Это отсутствие
+        # декоративного сигнала, а не ошибка dashboard: возвращаем unknown
+        # с HTTP 200, чтобы таблицы не создавали пачку красных 502 в браузере.
+        payload = {
+            "ok": True,
+            "vacancy_id": id,
+            "manager_inactive_minutes": None,
+            "employer_responses_read_percent": None,
+            "live": False,
+            "badge": "unknown",
+            "unavailable": True,
+        }
+        _cache[id] = (time.monotonic() + 120, payload)
+        return payload
 
     inactive = _to_int_or_none(stats.get("manager_inactive_minutes"))
     read_pct = _to_int_or_none(stats.get("employer_responses_read_percent"))

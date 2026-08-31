@@ -131,7 +131,8 @@ def _effective_daily_ceiling() -> int:
 
 
 def _protect_fresh_batch(batch: list, vacancy_meta: dict, *, hours: int,
-                         ceiling: int, reserve: int, used: int) -> tuple[list, int]:
+                         ceiling: int, reserve: int, used: int,
+                         now: datetime | None = None) -> tuple[list, int]:
     """Return allowed batch and count of deferred old vacancies."""
     old_slots = max(0, ceiling - min(max(reserve, 0), ceiling) - max(used, 0))
     total_slots = max(0, ceiling - max(used, 0))
@@ -139,7 +140,7 @@ def _protect_fresh_batch(batch: list, vacancy_meta: dict, *, hours: int,
     for vid in batch:
         if total_slots <= 0:
             deferred += 1
-        elif _is_fresh_vacancy(vacancy_meta.get(vid, {}) or {}, hours):
+        elif _is_fresh_vacancy(vacancy_meta.get(vid, {}) or {}, hours, now):
             selected.append(vid)
             total_slots -= 1
         elif old_slots > 0:

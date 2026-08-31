@@ -26,7 +26,7 @@ def test_old_vacancies_stop_at_reserved_boundary_but_fresh_continue():
     meta = {"old1": _meta(72), "fresh": _meta(1), "old2": _meta(48)}
     selected, deferred = _protect_fresh_batch(
         ["old1", "fresh", "old2"], meta,
-        hours=24, ceiling=200, reserve=50, used=149,
+        hours=24, ceiling=200, reserve=50, used=149, now=NOW,
     )
     assert selected == ["old1", "fresh"]
     assert deferred == 1
@@ -36,7 +36,7 @@ def test_at_boundary_only_fresh_can_consume_reserved_slots():
     meta = {"old": _meta(48), "fresh": _meta(1)}
     selected, deferred = _protect_fresh_batch(
         ["old", "fresh"], meta,
-        hours=24, ceiling=200, reserve=50, used=150,
+        hours=24, ceiling=200, reserve=50, used=150, now=NOW,
     )
     assert selected == ["fresh"]
     assert deferred == 1
@@ -45,7 +45,7 @@ def test_at_boundary_only_fresh_can_consume_reserved_slots():
 def test_smaller_custom_daily_limit_is_respected():
     meta = {"old": _meta(48)}
     selected, deferred = _protect_fresh_batch(
-        ["old"], meta, hours=24, ceiling=100, reserve=50, used=50,
+        ["old"], meta, hours=24, ceiling=100, reserve=50, used=50, now=NOW,
     )
     assert selected == []
     assert deferred == 1
@@ -54,12 +54,12 @@ def test_smaller_custom_daily_limit_is_respected():
 def test_fresh_can_use_last_slot_but_nothing_can_exceed_ceiling():
     meta = {"fresh": _meta(1), "old": _meta(48)}
     selected, deferred = _protect_fresh_batch(
-        ["old", "fresh"], meta, hours=24, ceiling=200, reserve=50, used=199,
+        ["old", "fresh"], meta, hours=24, ceiling=200, reserve=50, used=199, now=NOW,
     )
     assert selected == ["fresh"]
     assert deferred == 1
     selected, deferred = _protect_fresh_batch(
-        ["fresh"], meta, hours=24, ceiling=200, reserve=50, used=200,
+        ["fresh"], meta, hours=24, ceiling=200, reserve=50, used=200, now=NOW,
     )
     assert selected == []
     assert deferred == 1

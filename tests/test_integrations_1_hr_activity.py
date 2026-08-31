@@ -104,23 +104,25 @@ def test_unknown_when_inactive_missing(one_account):
 
 
 @responses.activate
-def test_hh_404_maps_to_502(one_account):
-    """HH вернул 404 → 502 {"ok": false, "error": "hh_http_404"}."""
+def test_hh_404_maps_to_unknown_badge(one_account):
+    """Недоступный optional endpoint не создаёт красный 502 в GUI."""
     responses.add(responses.GET, STATS_URL, json={"message": "not found"}, status=404)
     r = client.get(f"/api/vacancy/{VID}/hr_activity")
-    assert r.status_code == 502
-    assert r.json() == {"ok": False, "error": "hh_http_404"}
+    assert r.status_code == 200
+    assert r.json()["badge"] == "unknown"
+    assert r.json()["unavailable"] is True
 
 
 @responses.activate
-def test_network_error_maps_to_502(one_account):
-    """Сетевая ошибка requests → 502, error начинается с 'network:'."""
+def test_network_error_maps_to_unknown_badge(one_account):
+    """Сетевая ошибка optional-сигнала не ломает таблицу вакансий."""
     responses.add(responses.GET, STATS_URL, body=requests_lib.exceptions.ConnectionError("boom"))
     r = client.get(f"/api/vacancy/{VID}/hr_activity")
-    assert r.status_code == 502
+    assert r.status_code == 200
     data = r.json()
-    assert data["ok"] is False
-    assert data["error"].startswith("network:")
+    assert data["ok"] is True
+    assert data["badge"] == "unknown"
+    assert data["unavailable"] is True
 
 
 def test_no_oauth_token(monkeypatch):
