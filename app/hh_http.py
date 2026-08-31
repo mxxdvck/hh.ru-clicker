@@ -323,9 +323,17 @@ def _aio_session_connector(proxy: str | None, *, limit: int | None = None):
             "aiohttp не умеет socks нативно. Прямой egress запрещён (засвет "
             "реального IP); добавьте aiohttp-socks в окружение."
         ) from exc
+    # python-socks/aiohttp-socks принимает `socks5://`, но не curl-совместимую
+    # схему `socks5h://`. Суффикс h означает remote DNS; сохраняем эту семантику
+    # через rdns=True и передаём библиотеке поддерживаемую схему.
+    connector_url = proxy
+    connector_kw = {}
+    if scheme == "socks5h":
+        connector_url = "socks5://" + proxy.split("://", 1)[1]
+        connector_kw["rdns"] = True
     if limit:
-        return ProxyConnector.from_url(proxy, limit=limit)
-    return ProxyConnector.from_url(proxy)
+        connector_kw["limit"] = limit
+    return ProxyConnector.from_url(connector_url, **connector_kw)
 
 
 def _aio_egress_kwargs(*, limit: int | None = None) -> tuple[dict, dict]:

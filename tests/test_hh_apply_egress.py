@@ -17,6 +17,8 @@ pytest-asyncio нет — корутины запускаем через asyncio
 """
 import asyncio
 import concurrent.futures
+import sys
+import types
 
 import pytest
 
@@ -24,6 +26,29 @@ import app.hh_apply as hh_apply
 from app import hh_http
 
 PROXY_URL = "http://proxy.test:3128"
+
+
+def test_socks5h_connector_uses_supported_scheme_and_remote_dns(monkeypatch):
+    """aiohttp-socks не понимает socks5h URL: конвертируем в socks5 + rdns."""
+    calls = []
+
+    class FakeProxyConnector:
+        @classmethod
+        def from_url(cls, url, **kwargs):
+            calls.append((url, kwargs))
+            return "connector"
+
+    monkeypatch.setitem(
+        sys.modules, "aiohttp_socks",
+        types.SimpleNamespace(ProxyConnector=FakeProxyConnector),
+    )
+
+    connector = hh_http._aio_session_connector(
+        "socks5h://user:pass@proxy.test:1080", limit=7,
+    )
+
+    assert connector == "connector"
+    assert calls == [("socks5://user:pass@proxy.test:1080", {"rdns": True, "limit": 7})]
 
 
 def _run_coro(coro):
