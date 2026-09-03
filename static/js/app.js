@@ -3300,8 +3300,9 @@ function connect() {
       const dbg = document.getElementById('dbg-err');
       if (dbg) {
         dbg.style.display = '';
-        dbg.textContent = 'WebSocket Unauthorized — добавьте ?key=<API_KEY> в URL или X-API-Key.';
+        dbg.textContent = 'Нет доступа — введите API-ключ для этого устройства.';
       }
+      showApiKeyPrompt();
       return;  // прекращаем reconnect-цикл до перезагрузки страницы
     }
     State.reconnectTimer = setTimeout(() => {
@@ -3311,6 +3312,35 @@ function connect() {
   };
 
   ws.onerror = (e) => { console.error('WS error:', e); ws.close(); };
+}
+
+function showApiKeyPrompt() {
+  if (document.getElementById('api-key-prompt')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'api-key-prompt';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(5,9,14,.92);display:flex;align-items:center;justify-content:center;padding:18px';
+  overlay.innerHTML = `
+    <form style="width:min(430px,100%);background:var(--bg-card);border:1px solid var(--red);border-radius:10px;padding:20px;box-shadow:0 18px 60px #000">
+      <div style="font-size:18px;font-weight:700;margin-bottom:9px">🔐 Требуется доступ</div>
+      <div style="color:var(--dim);font-size:13px;line-height:1.45;margin-bottom:14px">
+        На этом устройстве ещё не сохранён API-ключ. Введите его один раз — он останется только в хранилище этого браузера.
+      </div>
+      <input type="password" autocomplete="current-password" required placeholder="API-ключ"
+        style="box-sizing:border-box;width:100%;padding:10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);margin-bottom:12px">
+      <button type="submit" style="width:100%;padding:10px;border:1px solid var(--green);border-radius:5px;background:rgba(63,185,80,.13);color:var(--green);cursor:pointer">Войти</button>
+    </form>`;
+  overlay.querySelector('form').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const key = overlay.querySelector('input').value.trim();
+    if (!key) return;
+    localStorage.setItem('hh-api-key', key);
+    // Удаляем возможный неверный ?key= из URL: он имеет приоритет над storage.
+    const url = new URL(location.href);
+    url.searchParams.delete('key');
+    location.replace(url.toString());
+  });
+  document.body.appendChild(overlay);
+  overlay.querySelector('input').focus();
 }
 
 function sendCmd(obj) {

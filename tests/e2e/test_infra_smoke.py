@@ -51,6 +51,18 @@ def test_sendcmd_via_ws(ui):
     assert {"type": "pause_toggle"} in ui.commands
 
 
+def test_api_key_prompt_is_visible_and_uses_password_input(ui):
+    """При WS 4401 телефон получает заметную форму, а не пустой dashboard."""
+    ui.open()
+    ui.page.evaluate("showApiKeyPrompt()")
+
+    prompt = ui.page.locator("#api-key-prompt")
+    assert prompt.is_visible()
+    assert "Требуется доступ" in prompt.text_content()
+    assert prompt.locator('input[type="password"]').count() == 1
+    assert prompt.locator('button[type="submit"]').text_content().strip() == "Войти"
+
+
 def test_http_mock_records_post(ui):
     """fetch POST: override через set_response + дефолт {"ok":true}; записи в ui.calls."""
     ui.open()

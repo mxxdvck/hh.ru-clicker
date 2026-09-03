@@ -1,9 +1,19 @@
 """Tests for websocket_endpoint message handling (does-not-crash assertions)."""
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from app.routes import app
 
 client = TestClient(app)
+
+
+def test_missing_api_key_closes_with_actionable_code(monkeypatch):
+    """Handshake завершается WS-кодом 4401, а не неразличимым HTTP 403."""
+    monkeypatch.setenv("HH_BOT_API_KEY", "test-only-api-key")
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws") as ws:
+            ws.receive_text()
+    assert exc.value.code == 4401
 
 
 def test_unknown_cmd_does_not_crash():

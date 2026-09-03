@@ -108,6 +108,11 @@ async def websocket_endpoint(ws: WebSocket):
     if _api_key:
         presented = ws.headers.get("x-api-key", "") or ws.query_params.get("api_key", "") or ""
         if not presented or not _secrets.compare_digest(str(presented), str(_api_key)):
+            # Если закрыть сокет до accept(), ASGI превращает это в обычный
+            # HTTP 403, и браузер сообщает close code 1006. Клиент тогда не
+            # отличает неверный ключ от сетевой ошибки и оставляет пустой GUI.
+            # Принимаем handshake без отправки данных и сразу закрываем 4401.
+            await ws.accept()
             await ws.close(code=4401)  # auth required
             log_debug("WS: rejected — missing/wrong api key")
             return
