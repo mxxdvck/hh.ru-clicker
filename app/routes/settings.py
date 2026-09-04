@@ -97,7 +97,7 @@ _RAW_LIST_KEYS = {
     "llm_profiles",
 }
 _RAW_LLM_KEYS = {
-    "llm_enabled", "llm_auto_send", "llm_use_cover_letter", "llm_use_resume",
+    "llm_enabled", "llm_auto_send", "llm_use_cover_letter", "llm_generate_cover_letter", "llm_use_resume",
     "llm_api_key", "llm_base_url", "llm_model", "llm_applicant_gender", "llm_profile_mode",
     "llm_system_prompt", "llm_openclaw_enabled", "llm_openclaw_agent",
     "llm_openclaw_model", "llm_openclaw_timeout",

@@ -59,3 +59,8 @@ audits/
 audit-*/
 decomp*/
 jadx*/
+
+# Local scratch / safety backups
+.tmp_*.py
+*.bak
+*.pre_*.bak

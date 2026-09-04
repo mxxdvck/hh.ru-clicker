@@ -20,13 +20,17 @@ if (-not (Test-Path $Python)) {
 }
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
-if ($ExposeLan) {
-  if (-not $env:HH_BOT_API_KEY) {
-    if (-not (Test-Path -LiteralPath $ApiKeyFile)) {
-      [guid]::NewGuid().ToString("N") | Set-Content -LiteralPath $ApiKeyFile -Encoding ASCII
-    }
-    $env:HH_BOT_API_KEY = (Get-Content -LiteralPath $ApiKeyFile -Raw).Trim()
+
+# /api/backup always requires the dashboard API key, including on loopback.
+# Keep the key in the existing ignored data/ mechanism so the JSON editor can
+# use the same auth as the other protected dashboard requests.
+if (-not $env:HH_BOT_API_KEY) {
+  if (-not (Test-Path -LiteralPath $ApiKeyFile)) {
+    [guid]::NewGuid().ToString("N") | Set-Content -LiteralPath $ApiKeyFile -Encoding ASCII
   }
+  $env:HH_BOT_API_KEY = (Get-Content -LiteralPath $ApiKeyFile -Raw).Trim()
+}
+if ($ExposeLan) {
   if (-not $env:HH_BOT_API_KEY) {
     throw "HH_BOT_API_KEY is required when exposing HH Clicker outside loopback."
   }
@@ -63,13 +67,13 @@ for ($i = 0; $i -lt 30; $i += 1) {
 
 if ($ready) {
   Start-Process $AppUrl
-  Write-Host "HH Clicker is running at $AppUrl"
+  Write-Host "HH Clicker is running at $Url (API key supplied to the browser)"
   if ($ExposeLan) {
     $lanIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
       Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
       Select-Object -ExpandProperty IPAddress)
     foreach ($ip in $lanIps) {
-      Write-Host "LAN IPv4 URL: http://$ip`:$Port/?key=$($env:HH_BOT_API_KEY)"
+      Write-Host "LAN IPv4 URL: http://$ip`:$Port/ (API key required; see data/hh_bot_api_key.txt)"
     }
     $lanIpv6s = @(Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue |
       Where-Object {
@@ -79,7 +83,7 @@ if ($ready) {
       } |
       Select-Object -ExpandProperty IPAddress)
     foreach ($ip in $lanIpv6s) {
-      Write-Host "LAN IPv6 URL: http://[$ip]:$Port/?key=$($env:HH_BOT_API_KEY)"
+      Write-Host "LAN IPv6 URL: http://[$ip]:$Port/ (API key required; see data/hh_bot_api_key.txt)"
     }
   }
 } else {

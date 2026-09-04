@@ -808,6 +808,17 @@
           </div>
           <div id="title-kw-status" style="font-size:11px;color:var(--dim);margin-top:6px"></div>
         </div>
+        <div style="border:1px solid var(--yellow);background:rgba(255,190,0,0.06);padding:10px;border-radius:6px;margin-bottom:12px">
+          <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--yellow)">🔎 Безопасный режим</div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="search-only-mode" style="accent-color:var(--yellow)"
+                   onchange="sendCmd({type:'set_config',key:'search_only_mode',value:this.checked})">
+            Только поиск — не отправлять отклики
+          </label>
+          <div style="font-size:11px;color:var(--dim);margin-top:4px;margin-left:22px">
+            Бот собирает и фильтрует вакансии, сохраняет очередь и показывает её в Dashboard, но apply-фаза физически заблокирована.
+          </div>
+        </div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:4px">
           <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--cyan)">Автопрохождение тестов</div>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
@@ -991,6 +1002,11 @@
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
           <input type="checkbox" id="llm-use-cover-letter" style="accent-color:var(--yellow)" checked onchange="_llmMarkEditing()">
           Учитывать сопроводительное письмо
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer" title="DeepSeek генерирует отдельное короткое письмо под каждую вакансию по описанию вакансии и резюме. Шаблон остаётся fallback.">
+          <input type="checkbox" id="llm-generate-cover-letter" style="accent-color:var(--purple,#c084fc)"
+                 onchange="sendCmd({type:'set_config',key:'llm_generate_cover_letter',value:this.checked})">
+          ✍️ DeepSeek пишет сопроводительные
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
           <input type="checkbox" id="llm-use-resume" style="accent-color:var(--cyan)" checked onchange="_llmMarkEditing()">

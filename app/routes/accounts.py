@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 from app.logging_utils import log_debug, _is_login_page
 from app.user_agent import webview_user_agent
 from app.hh_http import HH
+from app.hh_mobile_transport import MobileAPIError, mobile_request
 from app.config import accounts_data, save_accounts, hh_base
 from app.storage import save_browser_sessions
 from app.oauth import (
@@ -606,19 +607,28 @@ async def api_degraded_fallback(idx: int):
 
 @router.get("/api/account/{idx}/resume_text")
 async def api_resume_text(idx: int):
-    """Получить и вернуть текстовое представление резюме (для проверки)."""
-    s = None
-    if 0 <= idx < len(bot.account_states):
-        s = bot.account_states[idx]
-    else:
-        temp_idx = idx - len(bot.account_states)
-        s = bot.temp_states.get(temp_idx)
-    if not s:
+    """Получить резюме без активации временной browser-сессии.
+
+    Временный аккаунт уже содержит cookies/OAuth metadata в
+    ``temp_sessions``. Требовать ``AccountState`` здесь нельзя: его наличие
+    означает активированный worker. Используем тот же read-only account
+    resolver, что и остальные account endpoints.
+    """
+    acc = bot._get_apply_acc(idx)
+    if acc is None:
         return {"ok": False, "error": "Invalid idx"}
-    rh = s.acc.get("resume_hash", "")
+    rh = acc.get("resume_hash", "")
     _resume_cache.pop(rh, None)
-    client = get_client(s.acc)  # до executor: выбор клиента синхронный
-    text = await asyncio.get_event_loop().run_in_executor(None, client.fetch_resume)
+    client = get_client(acc)  # до executor: выбор клиента синхронный
+    result = await asyncio.get_event_loop().run_in_executor(None, client.fetch_resume)
+    if isinstance(result, dict):
+        # Web client returns {text, source}; mobile client returns the full
+        # resume JSON serialized as text for compatibility with this UI.
+        text = result.get("text", "") if "text" in result else json.dumps(
+            result, ensure_ascii=False, indent=2
+        )
+    else:
+        text = str(result or "")
     return {"ok": True, "resume_hash": rh, "length": len(text), "text": text}
 
 
@@ -1047,7 +1057,12 @@ async def api_edit_resume(idx: int, request: Request):
 
 @router.get("/api/account/{idx}/all_resumes")
 async def api_all_resumes(idx: int):
-    """List all resumes for this account (including clones). Uses HTML page for full data."""
+    """List all resumes for this account (including clones).
+
+    HH's current applicant profile no longer embeds ``applicantResumes`` in
+    the legacy SSR page. Keep the HTML parser for older pages and use the
+    official OAuth list endpoint when the legacy payload is empty.
+    """
     acc = bot._get_apply_acc(idx)
     if acc is None:
         return {"ok": False, "error": "Invalid idx"}
@@ -1087,6 +1102,44 @@ async def api_all_resumes(idx: int):
                 "experience_count": len(res.get("experience", [])),
                 "views_7d": (rs.get("views") or {}).get("count", 0),
                 "shows_7d": (rs.get("searchShows") or {}).get("count", 0),
+                "edit_url": f"{hh_base()}/resume/edit/{rhash}/position",
+            })
+        if resumes:
+            return {"resumes": resumes, "total": len(resumes)}
+
+        # New HH profile flow: /applicant/resumes redirects to
+        # /applicant/profile/me and no longer contains applicantResumes.
+        # Read the list through the already supported OAuth/mobile transport;
+        # this is read-only and does not activate a worker or persist settings.
+        try:
+            mobile_data = mobile_request(
+                acc, "GET", "/resumes/mine", params={"per_page": 30}
+            )
+        except MobileAPIError as e:
+            log_debug(f"api_all_resumes OAuth fallback HTTP {e.status_code}")
+            mobile_data = None
+        items = mobile_data.get("items", []) if isinstance(mobile_data, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            rhash = str(item.get("id") or item.get("hash") or "")
+            if not rhash:
+                continue
+            title = str(item.get("title") or "(без заголовка)")
+            raw_status = item.get("status", "")
+            status = raw_status.get("id", "") if isinstance(raw_status, dict) else raw_status
+            resumes.append({
+                "hash": rhash,
+                "title": title,
+                "status": status,
+                "percent": item.get("percent", 0),
+                "is_searchable": bool(item.get("is_searchable", item.get("isSearchable", False))),
+                "can_publish": bool(item.get("can_publish", item.get("canPublishOrUpdate", False))),
+                "updated": item.get("updated"),
+                "skills_count": len(item.get("key_skills") or item.get("keySkills") or []),
+                "experience_count": len(item.get("experience") or []),
+                "views_7d": 0,
+                "shows_7d": 0,
                 "edit_url": f"{hh_base()}/resume/edit/{rhash}/position",
             })
         return {"resumes": resumes, "total": len(resumes)}

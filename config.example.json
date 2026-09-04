@@ -1,0 +1,23 @@
+{
+  "_doc": "Safe public example. Copy to data/config.json and adjust locally. data/ is gitignored.",
+  "daily_apply_limit": 20,
+  "search_only_mode": true,
+  "merge_saved_searches": false,
+  "auto_resume_search_enabled": false,
+  "merge_favorited_vacancies": false,
+  "related_vacancies_enabled": false,
+  "auto_apply_tests": false,
+  "llm_enabled": false,
+  "llm_auto_send": false,
+  "llm_generate_cover_letter": false,
+  "llm_fill_questionnaire": false,
+  "min_salary": 0,
+  "search_period_days": 14,
+  "fresh_vacancies_mode": false,
+  "fresh_apply_reserve": 0,
+  "response_delay": 10,
+  "batch_responses": 1,
+  "prefer_quick_responses": false,
+  "title_include_keywords": [],
+  "title_exclude_keywords": []
+}

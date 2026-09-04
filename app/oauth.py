@@ -905,6 +905,7 @@ def fetch_vacancy_details(acc: dict, vid: str) -> dict:
             "accredited_it_employer": bool(emp.get("accredited_it_employer")),
             "trusted_employer": bool(emp.get("trusted")),
             "key_skills": [s.get("name", "") for s in (d.get("key_skills") or []) if isinstance(s, dict)],
+            "description": re.sub(r"<[^>]+>", " ", d.get("description") or "").strip(),
             "work_format": [
                 (w.get("id") if isinstance(w, dict) else str(w))
                 for w in (d.get("work_format") or [])

@@ -11,11 +11,12 @@ def test_load_config_parses_false_strings_as_false(tmp_path, monkeypatch):
         "llm_fill_questionnaire": "no",
         "auto_apply_tests": "off",
         "use_oauth_apply": "false",
+        "search_only_mode": "false",
         "llm_openclaw_enabled": "false",
     }), encoding="utf-8")
     monkeypatch.setattr(config, "CONFIG_FILE", path)
     for key in ("llm_enabled", "llm_auto_send", "llm_fill_questionnaire",
-                "auto_apply_tests", "use_oauth_apply"):
+                "auto_apply_tests", "use_oauth_apply", "search_only_mode"):
         monkeypatch.setattr(config.CONFIG, key, True)
     monkeypatch.setattr(config.CONFIG, "llm_openclaw_enabled", True)
 
@@ -26,6 +27,7 @@ def test_load_config_parses_false_strings_as_false(tmp_path, monkeypatch):
     assert config.CONFIG.llm_fill_questionnaire is False
     assert config.CONFIG.auto_apply_tests is False
     assert config.CONFIG.use_oauth_apply is False
+    assert config.CONFIG.search_only_mode is False
     assert config.CONFIG.llm_openclaw_enabled is False
 
 
@@ -38,3 +40,9 @@ def test_load_config_ignores_invalid_bool_instead_of_enabling_it(tmp_path, monke
     config.load_config()
 
     assert config.CONFIG.llm_auto_send is False
+
+
+def test_config_snapshot_contains_search_only_mode(monkeypatch):
+    monkeypatch.setattr(config.CONFIG, "search_only_mode", True)
+    snap = config.config_snapshot()
+    assert snap["search_only_mode"] is True

@@ -90,7 +90,11 @@ class Config:
     # WebSocket realtime updates от chatik.hh.ru (Phase 1). Off by default —
     # legacy polling loop продолжает работать. Включать per-account через /api/ws/{idx}/enable.
     use_websocket_realtime: bool = False
-    daily_apply_limit: int = 0  # Жёсткий лимит откликов в день (0 = без ограничения)
+    daily_apply_limit: int = 20  # Жёсткий лимит откликов в день (0 = без ограничения)
+    search_only_mode: bool = True  # Только собирать/фильтровать вакансии, физически не отправлять отклики
+    merge_saved_searches: bool = False  # Подмешивать сохранённые поиски HH к явному пулу URL
+    auto_resume_search_enabled: bool = False  # Автоматически добавлять широкий поиск по выбранному резюме
+    merge_favorited_vacancies: bool = False  # HH favorites merge
     stop_on_hh_limit: bool = True  # Полная остановка при HH лимите (не перепроверять)
     # Фильтр по формату работы (пустой = без фильтра, все форматы)
     # Возможные значения: "fullDay", "remote", "flexible", "shift", "flyInFlyOut"
@@ -104,6 +108,7 @@ class Config:
     llm_enabled: bool = False
     llm_auto_send: bool = False       # True = отправлять, False = только логировать черновик
     llm_use_cover_letter: bool = True  # Передавать сопроводительное письмо в контекст
+    llm_generate_cover_letter: bool = False  # DeepSeek генерирует письмо под каждую вакансию перед откликом
     llm_use_resume: bool = True        # Включать текст резюме в системный промпт
     # HH сам генерит quick_replies под каждое HR-сообщение — пробуем сначала их,
     # только на пустой ответ идём в свой LLM (экономит токены + официально-выглядящий текст).
@@ -260,12 +265,12 @@ _CONFIG_KEYS = [
     "pages_per_url", "max_concurrent", "response_delay", "pause_between_cycles",
     "limit_check_interval", "resume_touch_interval", "batch_responses", "min_salary",
     "auto_pause_errors", "questionnaire_default_answer", "llm_fill_questionnaire",
-    "skip_inconsistent", "use_oauth_apply", "auto_pick_resume", "default_client_mode", "daily_apply_limit", "stop_on_hh_limit", "llm_check_interval",
+    "skip_inconsistent", "use_oauth_apply", "auto_pick_resume", "default_client_mode", "daily_apply_limit", "search_only_mode", "merge_saved_searches", "auto_resume_search_enabled", "merge_favorited_vacancies", "stop_on_hh_limit", "llm_check_interval",
     "filter_agencies", "filter_low_competition", "search_period_days",
     "min_employer_rating", "min_employer_reviews", "min_recommendations_percent",
     "skip_auto_response_vacancies", "prefer_quick_responses", "accredited_it_only",
     "hh_daily_limit", "fresh_vacancies_mode", "fresh_vacancy_hours", "fresh_apply_reserve",
-    "hh_region", "llm_applicant_gender", "llm_auto_send", "llm_enabled",
+    "hh_region", "llm_applicant_gender", "llm_auto_send", "llm_enabled", "llm_generate_cover_letter",
     "llm_ws_push_enabled", "use_websocket_realtime", "chat_use_oauth", "llm_use_quick_replies",
     "hh_ai_letter_first_try", "related_vacancies_enabled", "hh_proxy_url",
 ]
@@ -416,7 +421,7 @@ def load_config():
         for k in ("llm_api_key", "llm_base_url", "llm_model", "llm_system_prompt", "llm_applicant_gender"):
             if k in data and isinstance(data[k], str):
                 setattr(CONFIG, k, data[k])
-        for k in ("llm_enabled", "llm_auto_send", "llm_use_cover_letter", "llm_use_resume", "llm_fill_questionnaire"):
+        for k in ("llm_enabled", "llm_auto_send", "llm_use_cover_letter", "llm_generate_cover_letter", "llm_use_resume", "llm_fill_questionnaire"):
             if k in data:
                 try:
                     setattr(CONFIG, k, _coerce_config_value(k, data[k]))

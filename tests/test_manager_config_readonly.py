@@ -11,6 +11,7 @@ def test_build_session_urls_does_not_mutate_or_save_global_config(monkeypatch):
     ]
     monkeypatch.setattr(manager_module.CONFIG, "url_pool", pool)
     monkeypatch.setattr(manager_module.CONFIG, "pages_per_url", 7)
+    monkeypatch.setattr(manager_module.CONFIG, "auto_resume_search_enabled", True)
 
     save_calls = []
     monkeypatch.setattr(manager_module, "save_config", lambda: save_calls.append(True))

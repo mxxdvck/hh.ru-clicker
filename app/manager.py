@@ -210,7 +210,8 @@ from app.hh_api import (
     parse_work_schedules, extract_search_query, parse_apply_strategy_meta,
 )
 
-from app.llm import generate_llm_reply, _openclaw_command, get_llm_last_status, get_llm_status_summary
+from app.llm import (generate_llm_reply, generate_llm_cover_letter, _openclaw_command,
+                     get_llm_last_status, get_llm_status_summary)
 
 from app.hh_client_factory import get_client
 
@@ -343,7 +344,7 @@ class BotManager:
             # резюме нельзя подмешивать в эту сессию.
             if not url_resume or url_resume == str(resume_hash):
                 urls.append(url)
-        if not any(str(parse_search_url(url)[2].get("resume") or "") == str(resume_hash)
+        if CONFIG.auto_resume_search_enabled and not any(str(parse_search_url(url)[2].get("resume") or "") == str(resume_hash)
                    for url in urls):
             urls.insert(0, default_resume_url)
         return urls
@@ -932,6 +933,22 @@ class BotManager:
         # All states: regular + temp sessions (for global_stats, vacancy_queues)
         all_states = list(self.account_states) + list(self.temp_states.values())
 
+        def _search_preview(state, limit=50):
+            vids = list(getattr(state, "vacancies_queue", []) or [])[:limit]
+            meta_map = getattr(state, "vacancy_meta", {}) or {}
+            preview = []
+            for vid in vids:
+                meta = dict(meta_map.get(vid, {}) or {})
+                preview.append({
+                    "id": str(vid),
+                    "title": meta.get("title", ""),
+                    "company": meta.get("company", ""),
+                    "salary_from": meta.get("salary_from"),
+                    "salary_to": meta.get("salary_to"),
+                    "url": meta.get("url") or f"{hh_base()}/vacancy/{vid}",
+                })
+            return preview
+
         accounts = []
         for i, s in enumerate(self.account_states):
             next_touch_str = ""
@@ -982,6 +999,7 @@ class BotManager:
                 "errors": s.errors,
                 "already_applied": s.already_applied,
                 "found_vacancies": s.found_vacancies,
+                "search_preview": _search_preview(s),
                 "current_vacancy_title": s.current_vacancy_title,
                 "current_vacancy_company": s.current_vacancy_company,
                 "current_vacancy_idx": _current_vacancy_idx,
@@ -1107,6 +1125,7 @@ class BotManager:
                     "errors": s.errors,
                     "already_applied": s.already_applied,
                     "found_vacancies": s.found_vacancies,
+                    "search_preview": _search_preview(s),
                     "current_vacancy_title": s.current_vacancy_title,
                     "current_vacancy_company": s.current_vacancy_company,
                     "current_vacancy_idx": _current_vacancy_idx,
@@ -1188,6 +1207,7 @@ class BotManager:
                     "letter": ts.get("letter", ""),
                     "status": "—", "status_detail": "", "sent": 0, "tests": 0,
                     "errors": 0, "already_applied": 0, "found_vacancies": 0,
+                    "search_preview": [],
                     "current_vacancy_title": "", "current_vacancy_company": "",
                     "current_vacancy_idx": 0, "total_vacancies": 0,
                     "salary_skipped": 0, "questionnaire_sent": 0,
@@ -1263,6 +1283,9 @@ class BotManager:
                 "auto_apply_tests": CONFIG.auto_apply_tests,
                 "use_oauth_apply": CONFIG.use_oauth_apply,
                 "daily_apply_limit": CONFIG.daily_apply_limit,
+                "search_only_mode": CONFIG.search_only_mode,
+                "merge_saved_searches": CONFIG.merge_saved_searches,
+                "auto_resume_search_enabled": CONFIG.auto_resume_search_enabled,
                 "hh_daily_limit": CONFIG.hh_daily_limit,
                 "fresh_vacancies_mode": CONFIG.fresh_vacancies_mode,
                 "fresh_vacancy_hours": CONFIG.fresh_vacancy_hours,
@@ -1284,6 +1307,7 @@ class BotManager:
                 "llm_auto_send": CONFIG.llm_auto_send,
                 "llm_fill_questionnaire": CONFIG.llm_fill_questionnaire,
                 "llm_use_cover_letter": CONFIG.llm_use_cover_letter,
+                "llm_generate_cover_letter": CONFIG.llm_generate_cover_letter,
                 "llm_use_resume": CONFIG.llm_use_resume,
                 "llm_use_quick_replies": getattr(CONFIG, "llm_use_quick_replies", True),
                 "hh_ai_letter_first_try": getattr(CONFIG, "hh_ai_letter_first_try", True),
@@ -1346,7 +1370,7 @@ class BotManager:
     def _run_account_worker_inner(self, idx: int, state: AccountState) -> None:
         acc = state.acc
 
-        if not state._active_search_forced:
+        if not CONFIG.search_only_mode and not state._active_search_forced:
             try:
                 r = get_client(acc).set_job_search_status("active_search")
                 if r.get("ok"):
@@ -1396,6 +1420,10 @@ class BotManager:
                             state.status_detail = "Лимит HH. Проверка сейчас..."
                     else:
                         state.status_detail = "Лимит HH. Проверка через 1м"
+                elif state.paused_reason == "search_only":
+                    state.status = "search_only"
+                    if not state.status_detail.startswith("Только поиск"):
+                        state.status_detail = "Только поиск: проверка завершена"
                 else:
                     state.status = "idle"
                     state.status_detail = "Пауза пользователем"
@@ -1407,7 +1435,7 @@ class BotManager:
             now = datetime.now()
 
             # === АВТОПОДНЯТИЕ РЕЗЮМЕ ===
-            if state.resume_touch_enabled:
+            if state.resume_touch_enabled and not CONFIG.search_only_mode:
                 should_touch = False
                 if state.next_resume_touch is None:
                     should_touch = True
@@ -1510,7 +1538,8 @@ class BotManager:
             # к существующему пулу. items_url у HH возвращается в api.hh.ru-домене;
             # cookie-collector использует hh.ru/search/vacancy, поэтому конвертируем.
             try:
-                for ss in fetch_saved_vacancy_searches(acc):
+                saved_searches = fetch_saved_vacancy_searches(acc) if CONFIG.merge_saved_searches else []
+                for ss in saved_searches:
                     iu = ss.get("items_url", "") or ""
                     if not iu:
                         continue
@@ -1609,7 +1638,7 @@ class BotManager:
             favorited_ids: set = set()
             try:
                 fav = fetch_favorited_vacancies(acc)
-                if fav:
+                if fav and not CONFIG.search_only_mode and CONFIG.merge_favorited_vacancies:
                     favorited_ids = set(fav)
                     new_count = len(favorited_ids - unique_vacancies)
                     unique_vacancies |= favorited_ids
@@ -1645,6 +1674,13 @@ class BotManager:
             )
 
             if not unique_vacancies:
+                if CONFIG.search_only_mode:
+                    state.status = "search_only"
+                    state.status_detail = "Только поиск: подходящих вакансий 0"
+                    state.paused = True
+                    state.paused_reason = "search_only"
+                    self._add_log(state.short, state.color, "🔎 Только поиск завершён: вакансий 0; аккаунт поставлен на паузу", "info")
+                    continue
                 if state.cookies_expired and not state.degraded_mode:
                     # Cookies dead AND OAuth fallback тоже не вернул ничего —
                     # тогда уже честная пауза до обновления кук.
@@ -1738,6 +1774,7 @@ class BotManager:
                     CONFIG.skip_auto_response_vacancies
                     or CONFIG.accredited_it_only
                     or CONFIG.prefer_quick_responses
+                    or CONFIG.llm_generate_cover_letter
                 )
                 if need_details:
                     det = fetch_vacancy_details(acc, vid)
@@ -1746,6 +1783,7 @@ class BotManager:
                         meta["quick_responses_allowed"] = det.get("quick_responses_allowed")
                         meta["accredited_it_employer"] = det.get("accredited_it_employer")
                         meta["key_skills"] = det.get("key_skills") or []
+                        meta["description"] = det.get("description") or ""
                         if det.get("archived"):
                             continue
                         if CONFIG.skip_auto_response_vacancies and det.get("auto_response"):
@@ -1835,6 +1873,13 @@ class BotManager:
             )
 
             if not filtered:
+                if CONFIG.search_only_mode:
+                    state.status = "search_only"
+                    state.status_detail = "Только поиск: после фильтров подходящих вакансий 0"
+                    state.paused = True
+                    state.paused_reason = "search_only"
+                    self._add_log(state.short, state.color, "🔎 Только поиск завершён: после фильтров 0; аккаунт поставлен на паузу", "info")
+                    continue
                 state.status = "waiting"
                 state.status_detail = "Нет новых вакансий"
                 self._add_log(
@@ -1896,16 +1941,33 @@ class BotManager:
                 "color": state.color,
             }
 
+            # Search-only: очередь и метаданные готовы, но apply-фаза запрещена.
+            if CONFIG.search_only_mode:
+                state.status = "search_only"
+                state.status_detail = f"Только поиск: найдено {len(filtered)} подходящих вакансий; проверка завершена"
+                state.paused = True
+                state.paused_reason = "search_only"
+                self._add_log(state.short, state.color,
+                              f"🔎 Только поиск завершён: {len(filtered)} вакансий в очереди; аккаунт поставлен на паузу", "info")
+                continue
+
             # === ОТПРАВКА ОТКЛИКОВ (ПАКЕТАМИ) ===
             state.status = "applying"
             state.status_detail = f"0/{state.total_vacancies}"
 
-            batch_size = CONFIG.batch_responses
+            batch_size = 1 if CONFIG.llm_generate_cover_letter else CONFIG.batch_responses
             i = 0
 
             while i < len(filtered):
                 if (self._stop_event.is_set() or self.paused or state.paused
                         or state.limit_exceeded or getattr(state, "_deleted", False)):
+                    break
+                # Runtime guard: если режим включили после формирования очереди,
+                # следующий ещё не отправленный батч блокируется.
+                if CONFIG.search_only_mode:
+                    state.status = "search_only"
+                    state.status_detail = f"Только поиск: {len(filtered)} вакансий в очереди, отклики отключены"
+                    self._add_log(state.short, state.color, "🔎 Только поиск включён: apply-фаза остановлена", "info")
                     break
 
                 batch = filtered[i: i + batch_size]
@@ -2043,24 +2105,66 @@ class BotManager:
                         "info",
                     )
 
-                # Choose apply method: OAuth API or Web (per-account or global).
-                # Также форс-OAuth в degraded mode (cookies dead, токен живой).
+                # Последний safety-check непосредственно перед сетевой отправкой.
+                if CONFIG.search_only_mode:
+                    state.status = "search_only"
+                    state.status_detail = f"Только поиск: {len(filtered)} вакансий в очереди, отклики отключены"
+                    self._add_log(state.short, state.color, "🔎 Только поиск: отправка батча заблокирована", "info")
+                    break
+
+                # Персональное сопроводительное через DeepSeek. Работаем с копией account.
+                apply_acc = acc
+                if CONFIG.llm_generate_cover_letter and batch:
+                    vid_for_letter = batch[0]
+                    meta_for_letter = state.vacancy_meta.get(vid_for_letter, {}) or {}
+                    try:
+                        det = fetch_vacancy_details(acc, vid_for_letter) or {}
+                        if det:
+                            meta_for_letter.update({
+                                "key_skills": det.get("key_skills") or meta_for_letter.get("key_skills") or [],
+                                "description": det.get("description") or meta_for_letter.get("description") or "",
+                                "response_letter_required": det.get("response_letter_required"),
+                            })
+                        resume_text = ""
+                        if CONFIG.llm_use_resume:
+                            resume_data = get_client(acc).fetch_resume()
+                            if isinstance(resume_data, dict):
+                                resume_text = resume_data.get("text", "") if "text" in resume_data else json.dumps(resume_data, ensure_ascii=False)
+                            else:
+                                resume_text = str(resume_data or "")
+                        generated_letter = generate_llm_cover_letter(
+                            vacancy_title=meta_for_letter.get("title", ""),
+                            company=meta_for_letter.get("company", ""),
+                            vacancy_description=meta_for_letter.get("description", ""),
+                            key_skills=meta_for_letter.get("key_skills") or [],
+                            resume_text=resume_text,
+                            account_key=f"cover:{state.short}:{vid_for_letter}",
+                            max_length=meta_for_letter.get("letter_max_length"),
+                        )
+                        if generated_letter:
+                            apply_acc = dict(acc)
+                            apply_acc["letter"] = generated_letter
+                            self._add_log(state.short, state.color, f"✍️ DeepSeek-письмо {vid_for_letter}: {len(generated_letter)} симв.", "info")
+                        else:
+                            self._add_log(state.short, state.color, f"⚠️ DeepSeek не дал письмо для {vid_for_letter}, использую шаблон", "warning")
+                    except Exception as e:
+                        log_debug(f"cover-letter [{state.short}] {vid_for_letter}: {e}")
+                        self._add_log(state.short, state.color, f"⚠️ Ошибка DeepSeek-письма {vid_for_letter}, использую шаблон", "warning")
+
                 if state.use_oauth or CONFIG.use_oauth_apply or state.degraded_mode:
-                    # OAuth: synchronous, one by one (API doesn't support batch)
                     results = []
                     for vid in batch:
                         if state.paused or getattr(state, "_deleted", False):
                             break
                         try:
-                            result = _oauth_apply(acc, vid, acc.get("letter", ""))
+                            result = _oauth_apply(apply_acc, vid, apply_acc.get("letter", ""))
                             results.append(result)
                         except Exception as e:
                             results.append(e)
                         if CONFIG.response_delay > 0:
                             time.sleep(CONFIG.response_delay)
                 else:
-                    # Web: async batch via aiohttp
-                    client = get_client(acc)
+                    client = get_client(apply_acc)
                     def _make_send_batch(b):
                         async def send_batch():
                             tasks = [client.submit_response(vid,
@@ -2623,6 +2727,9 @@ class BotManager:
 
     def _process_llm_replies(self, state: AccountState) -> None:
         """Check recent unread negotiations for employer messages and auto-reply using LLM."""
+        if CONFIG.search_only_mode:
+            state.llm_status = "search_only"
+            return
         if not state.llm_enabled:
             return
         # Non-blocking: if another thread is already processing this account, skip
@@ -3176,7 +3283,7 @@ class BotManager:
 
                 ts = datetime.now().strftime("%d.%m %H:%M")
 
-                if CONFIG.llm_auto_send:
+                if CONFIG.llm_auto_send and not CONFIG.search_only_mode:
                     with self._llm_sent_lock:
                         if global_key in self._llm_sent_global:
                             log_debug(f"LLM [{state.short}] {neg_id}: другой поток уже отправил (pid={cur_pid}), пропуск")

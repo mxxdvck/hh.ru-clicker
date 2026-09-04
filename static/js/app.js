@@ -63,6 +63,7 @@ const T = {
     status_idle: 'ОЖИДАНИЕ',
     status_collecting: 'СБОР ВАКАНСИЙ',
     status_applying: 'ОТПРАВКА ОТКЛИКОВ',
+    status_search_only: 'ТОЛЬКО ПОИСК',
     status_limit: 'ЛИМИТ',
     status_waiting: 'ПАУЗА',
     status_checking: 'ПРОВЕРКА ЛИМИТА',
@@ -331,6 +332,7 @@ const T = {
     status_idle: 'IDLE',
     status_collecting: 'COLLECTING',
     status_applying: 'APPLYING',
+    status_search_only: 'SEARCH ONLY',
     status_limit: 'LIMIT',
     status_waiting: 'PAUSED',
     status_checking: 'CHECKING LIMIT',
@@ -1167,6 +1169,7 @@ function syncLlmSettings(snap) {
   const cfg = snap?.config || {};
   const as = document.getElementById('llm-auto-send');
   const cl = document.getElementById('llm-use-cover-letter');
+  const gcl = document.getElementById('llm-generate-cover-letter');
   const ur = document.getElementById('llm-use-resume');
   const fq = document.getElementById('llm-fill-questionnaire');
   const qr = document.getElementById('llm-use-quick-replies');
@@ -1180,6 +1183,7 @@ function syncLlmSettings(snap) {
   if (!_llmSettingsEditing) {
     if (as && cfg.llm_auto_send !== undefined) as.checked = cfg.llm_auto_send;
     if (cl && cfg.llm_use_cover_letter !== undefined) cl.checked = cfg.llm_use_cover_letter;
+    if (gcl && cfg.llm_generate_cover_letter !== undefined) gcl.checked = cfg.llm_generate_cover_letter;
     if (ur && cfg.llm_use_resume !== undefined) ur.checked = cfg.llm_use_resume;
     if (fq && cfg.llm_fill_questionnaire !== undefined) fq.checked = cfg.llm_fill_questionnaire;
     if (qr && cfg.llm_use_quick_replies !== undefined) qr.checked = cfg.llm_use_quick_replies;
@@ -1389,6 +1393,8 @@ function syncScheduleSettings(snap) {
   if (oa && cfg.use_oauth_apply !== undefined) oa.checked = cfg.use_oauth_apply;
   const dal = document.getElementById('daily-apply-limit');
   if (dal && cfg.daily_apply_limit !== undefined) dal.value = cfg.daily_apply_limit;
+  const som = document.getElementById('search-only-mode');
+  if (som && cfg.search_only_mode !== undefined) som.checked = cfg.search_only_mode;
   const sohl = document.getElementById('stop-on-hh-limit');
   if (sohl && cfg.stop_on_hh_limit !== undefined) sohl.checked = cfg.stop_on_hh_limit;
   const fvm = document.getElementById('fresh-vacancies-mode');
@@ -3548,6 +3554,7 @@ const STATUS_MAP = {
   idle:       ['⏸', 'status_idle',       'status-idle'],
   collecting: ['📥', 'status_collecting', 'status-collecting'],
   applying:   ['📤', 'status_applying',   'status-applying'],
+  search_only:['🔎', 'status_search_only','status-collecting'],
   limit:      ['🚫', 'status_limit',      'status-limit'],
   waiting:    ['⏳', 'status_waiting',    'status-waiting'],
   checking:   ['🔍', 'status_checking',   'status-checking'],
@@ -3649,6 +3656,10 @@ function buildCardHTML(acc) {
       <div class="acc-vacancy-title c-dim">${t('card_waiting')}</div>
     </div>
     <div class="acc-meta" id="acc-meta-${acc.idx}"></div>
+    <details id="acc-search-preview-wrap-${acc.idx}" style="display:none;margin:5px 0;border:1px solid var(--border);border-radius:4px;padding:4px 7px">
+      <summary style="cursor:pointer;color:var(--yellow);font-size:11px">🔎 Найденные вакансии: <span id="acc-search-preview-count-${acc.idx}">0</span></summary>
+      <div id="acc-search-preview-${acc.idx}" style="margin-top:5px;max-height:260px;overflow:auto;font-size:11px"></div>
+    </details>
     <div class="acc-hh-stats" id="acc-hh-${acc.idx}">${t('card_hh_loading')}</div>
     <div id="acc-llm-status-${acc.idx}" style="font-size:11px;padding:2px 0;color:var(--cyan);display:none"></div>
     <div class="acc-resume-stats" id="acc-rs-${acc.idx}" style="display:none">
@@ -3895,6 +3906,12 @@ function updateCard(card, acc) {
       badge.textContent = t('status_all_paused');
       badge.title = '';
     } else if (accPaused) {
+      if (acc.paused_reason === 'search_only') {
+        badge.className = 'acc-status-badge status-collecting';
+        badge.textContent = '🔎 ' + t('status_search_only');
+        badge.title = acc.status_detail || 'Поиск завершён, отклики отключены';
+        return;
+      }
       const hhUsed = acc.hh_today_applies || 0;
       const hhLimit = acc.hh_daily_limit || 200;
       if (acc.hard_stopped && hhUsed >= hhLimit) {
@@ -3919,6 +3936,24 @@ function updateCard(card, acc) {
       badge.className = 'acc-status-badge ' + cls;
       badge.textContent = icon + ' ' + (labelKey ? t(labelKey) : acc.status.toUpperCase());
       if (acc.status_detail) badge.title = acc.status_detail;
+    }
+  }
+
+  // Search-only preview: даёт проверить выдачу до разрешения откликов.
+  const spWrap = document.getElementById('acc-search-preview-wrap-' + acc.idx);
+  const spBody = document.getElementById('acc-search-preview-' + acc.idx);
+  const spCount = document.getElementById('acc-search-preview-count-' + acc.idx);
+  const preview = Array.isArray(acc.search_preview) ? acc.search_preview : [];
+  const searchOnly = Boolean(State.lastSnapshot?.config?.search_only_mode);
+  if (spWrap) {
+    spWrap.style.display = (searchOnly && preview.length) ? '' : 'none';
+    if (spCount) spCount.textContent = preview.length;
+    if (spBody && searchOnly && preview.length) {
+      spBody.innerHTML = preview.map((v, n) => {
+        const salary = (v.salary_from || v.salary_to)
+          ? ` · ${esc(v.salary_from || '?')}-${esc(v.salary_to || '?')}` : '';
+        return `<div style="padding:4px 0;border-bottom:1px solid var(--border)">${n+1}. <a href="${esc(v.url || '#')}" target="_blank" rel="noopener" style="color:var(--cyan)">${esc(v.title || ('ID ' + v.id))}</a>${v.company ? ` · ${esc(v.company)}` : ''}${salary}</div>`;
+      }).join('');
     }
   }
 
