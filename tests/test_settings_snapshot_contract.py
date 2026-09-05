@@ -28,3 +28,21 @@ def test_dashboard_snapshot_preserves_gender_region_and_run_limit(monkeypatch):
     assert config["llm_applicant_gender"] == "male"
     assert config["hh_region"] == "moscow"
     assert config["run_apply_limit"] == 7
+
+
+def test_dashboard_snapshot_includes_search_filter_breakdown(monkeypatch):
+    bot = _empty_bot(monkeypatch)
+    state = manager.AccountState(
+        {"name": "Test", "short": "T", "color": "yellow", "urls": []}
+    )
+    state.filter_stats = {
+        "raw_collected": 248,
+        "duplicates": 103,
+        "missing_title": 29,
+        "accepted": 6,
+    }
+    bot.account_states = [state]
+
+    account = bot.get_state_snapshot()["accounts"][0]
+
+    assert account["filter_stats"] == state.filter_stats

@@ -3647,6 +3647,10 @@ function buildCardHTML(acc) {
       <div class="acc-vacancy-title c-dim">${t('card_waiting')}</div>
     </div>
     <div class="acc-meta" id="acc-meta-${acc.idx}"></div>
+    <details id="acc-search-filter-wrap-${acc.idx}" open style="display:none;margin:5px 0;border:1px solid var(--border);border-radius:4px;padding:4px 7px">
+      <summary style="cursor:pointer;color:var(--cyan);font-size:11px">📊 Разбор поиска: <span id="acc-search-filter-summary-${acc.idx}">0 → 0</span></summary>
+      <div id="acc-search-filter-${acc.idx}" style="display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:5px;font-size:10px;color:var(--dim)"></div>
+    </details>
     <details id="acc-search-preview-wrap-${acc.idx}" style="display:none;margin:5px 0;border:1px solid var(--border);border-radius:4px;padding:4px 7px">
       <summary style="cursor:pointer;color:var(--yellow);font-size:11px">🔎 Найденные вакансии: <span id="acc-search-preview-count-${acc.idx}">0</span></summary>
       <div id="acc-search-preview-${acc.idx}" style="margin-top:5px;max-height:260px;overflow:auto;font-size:11px"></div>
@@ -3936,6 +3940,51 @@ function updateCard(card, acc) {
   const spCount = document.getElementById('acc-search-preview-count-' + acc.idx);
   const preview = Array.isArray(acc.search_preview) ? acc.search_preview : [];
   const searchOnly = Boolean(State.lastSnapshot?.config?.search_only_mode);
+
+  const fsWrap = document.getElementById('acc-search-filter-wrap-' + acc.idx);
+  const fsBody = document.getElementById('acc-search-filter-' + acc.idx);
+  const fsSummary = document.getElementById('acc-search-filter-summary-' + acc.idx);
+  const fs = (acc.filter_stats && typeof acc.filter_stats === 'object') ? acc.filter_stats : {};
+  const rawCollected = Number(fs.raw_collected || 0);
+  const acceptedCount = Number(fs.accepted || 0);
+  const candidateCount = Number(fs.candidates || 0);
+  const hasFilterStats = searchOnly && (rawCollected > 0 || candidateCount > 0 || Object.keys(fs).length > 0);
+  if (fsWrap) {
+    fsWrap.style.display = hasFilterStats ? '' : 'none';
+    if (fsSummary) fsSummary.textContent = `${rawCollected} → ${acceptedCount}`;
+    if (fsBody && hasFilterStats) {
+      const rows = [
+        ['Собрано', rawCollected],
+        ['Уникальных', Number(fs.unique_from_search || 0)],
+        ['Дубли', Number(fs.duplicates || 0)],
+        ['Перед фильтрами', candidateCount],
+        ['Название восстановлено', Number(fs.title_recovered || 0)],
+        ['Без названия', Number(fs.missing_title || 0)],
+        ['Архив', Number(fs.archived || 0)],
+        ['По названию', Number(fs.title || 0)],
+        ['Уже откликались', Number(fs.already_applied || 0)],
+        ['Отказ HH', Number(fs.discarded || 0)],
+        ['Тесты', Number(fs.tests || 0)],
+        ['Безопасность', Number(fs.unsafe || 0)],
+        ['Формат', Number(fs.schedule || 0)],
+        ['Зарплата', Number(fs.salary || 0)],
+        ['Автоответ', Number(fs.auto_response || 0)],
+        ['Аккредит. IT', Number(fs.accredited || 0)],
+        ['Рейтинг', Number(fs.employer_rating || 0)],
+        ['Degraded', Number(fs.degraded || 0)],
+        ['Чёрный список', Number(fs.blacklisted || 0)],
+        ['Related +', Number(fs.related_added || 0)],
+        ['Избранное +', Number(fs.favorited_added || 0)],
+        ['Разрешающих слов', Array.isArray(State.lastSnapshot?.config?.title_include_keywords) ? State.lastSnapshot.config.title_include_keywords.length : 0],
+        ['Исключающих слов', Array.isArray(State.lastSnapshot?.config?.title_exclude_keywords) ? State.lastSnapshot.config.title_exclude_keywords.length : 0],
+        ['Подходит', acceptedCount],
+      ];
+      fsBody.innerHTML = rows.map(([label, value]) =>
+        `<span><b style="color:var(--text)">${esc(label)}:</b> ${value}</span>`
+      ).join('');
+    }
+  }
+
   if (spWrap) {
     spWrap.style.display = (searchOnly && preview.length) ? '' : 'none';
     if (spCount) spCount.textContent = preview.length;

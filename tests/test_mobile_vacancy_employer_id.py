@@ -31,7 +31,11 @@ def test_oauth_vacancy_details_exposes_numeric_employer_id(monkeypatch):
 
         @staticmethod
         def json():
-            return {"employer": {"id": "314", "trusted": True}}
+            return {
+                "name": "Программист 1С",
+                "alternate_url": "https://hh.ru/vacancy/314",
+                "employer": {"id": "314", "name": "Acme", "trusted": True},
+            }
 
     monkeypatch.setattr(oauth, "_oauth_headers", lambda acc: {"Authorization": "Bearer x"})
     monkeypatch.setattr(oauth.HH, "get", lambda *args, **kwargs: Response())
@@ -41,3 +45,6 @@ def test_oauth_vacancy_details_exposes_numeric_employer_id(monkeypatch):
     result = oauth.fetch_vacancy_details(ACC, "vacancy-employer-regression")
 
     assert result["employer_id"] == 314
+    assert result["title"] == "Программист 1С"
+    assert result["company"] == "Acme"
+    assert result["url"] == "https://hh.ru/vacancy/314"

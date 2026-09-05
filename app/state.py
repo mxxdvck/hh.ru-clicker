@@ -52,6 +52,8 @@ class AccountState:
 
         self.vacancies_by_url = {}
         self.vacancies_queue = []
+        # Per-cycle search pipeline counters shown in Dashboard search-only mode.
+        self.filter_stats = {}
 
         self.limit_exceeded = False
         self.limit_reset_time = None

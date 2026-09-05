@@ -203,6 +203,11 @@ def test_search_only_paused_account_shows_found_vacancy_preview(ui):
             {"id": "101", "title": "Python Developer", "company": "Acme", "url": "https://hh.ru/vacancy/101"},
             {"id": "102", "title": "Backend Developer", "company": "Beta", "url": "https://hh.ru/vacancy/102"},
         ],
+        filter_stats={
+            "raw_collected": 248, "unique_from_search": 145, "duplicates": 103,
+            "candidates": 145, "missing_title": 29, "title": 100,
+            "already_applied": 6, "discarded": 4, "accepted": 6,
+        },
     )
     state = _state(accounts=[acc])
     state["config"] = _base_config(search_only_mode=True)
@@ -216,6 +221,15 @@ def test_search_only_paused_account_shows_found_vacancy_preview(ui):
     expect(ui.page.locator("#acc-search-preview-0 a")).to_have_count(2)
     expect(ui.page.locator("#acc-search-preview-0")).to_contain_text("Python Developer")
     expect(ui.page.locator("#acc-search-preview-0")).to_contain_text("Backend Developer")
+    breakdown = ui.page.locator("#acc-search-filter-wrap-0")
+    expect(breakdown).to_be_visible()
+    expect(ui.page.locator("#acc-search-filter-summary-0")).to_have_text("248 → 6")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Дубли: 103")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Без названия: 29")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("По названию: 100")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Уже откликались: 6")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Отказ HH: 4")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Подходит: 6")
 
 def test_multiple_accounts_all_rendered(ui):
     """Несколько аккаунтов (4) → все карточки отрисованы в #accounts-grid."""

@@ -1054,6 +1054,7 @@ class BotManager:
                 "already_applied": s.already_applied,
                 "found_vacancies": s.found_vacancies,
                 "search_preview": _search_preview(s),
+                "filter_stats": dict(getattr(s, "filter_stats", {}) or {}),
                 "current_vacancy_title": s.current_vacancy_title,
                 "current_vacancy_company": s.current_vacancy_company,
                 "current_vacancy_idx": _current_vacancy_idx,
@@ -1180,6 +1181,7 @@ class BotManager:
                     "already_applied": s.already_applied,
                     "found_vacancies": s.found_vacancies,
                     "search_preview": _search_preview(s),
+                    "filter_stats": dict(getattr(s, "filter_stats", {}) or {}),
                     "current_vacancy_title": s.current_vacancy_title,
                     "current_vacancy_company": s.current_vacancy_company,
                     "current_vacancy_idx": _current_vacancy_idx,
@@ -1825,7 +1827,13 @@ class BotManager:
             # Сохраняем статистику по URL для снапшота
             state.url_stats = dict(state.vacancies_by_url)
 
+            raw_collected = len(all_vacancies)
             unique_vacancies = set(all_vacancies)
+            search_unique_count = len(unique_vacancies)
+            duplicate_hits = max(0, raw_collected - search_unique_count)
+            related_added = 0
+            favorited_added = 0
+            blacklisted_skipped = 0
             # related_vacancies — рекомендательный фид HH под seed-вакансию.
             # Обычно match'ит лучше чем текстовый поиск (внутренний ML ranker).
             # Один запрос на цикл — берём последнюю applied как seed.
@@ -1845,6 +1853,7 @@ class BotManager:
                         if related:
                             new_ids = set(related) - unique_vacancies
                             unique_vacancies |= set(related)
+                            related_added += len(new_ids)
                             if new_ids:
                                 self._add_log(state.short, state.color,
                                     f"\U0001f517 Related: +{len(new_ids)} вакансий (seed {seed_vid})", "info")
@@ -1859,6 +1868,7 @@ class BotManager:
                 if fav and not CONFIG.search_only_mode and CONFIG.merge_favorited_vacancies:
                     favorited_ids = set(fav)
                     new_count = len(favorited_ids - unique_vacancies)
+                    favorited_added += new_count
                     unique_vacancies |= favorited_ids
                     if new_count:
                         self._add_log(
@@ -1873,6 +1883,7 @@ class BotManager:
                 bl = fetch_blacklisted_vacancies(acc)
                 if bl:
                     blocked_count = len(unique_vacancies & bl)
+                    blacklisted_skipped += blocked_count
                     unique_vacancies -= bl
                     if blocked_count:
                         self._add_log(
@@ -1884,10 +1895,20 @@ class BotManager:
                 log_debug(f"blacklist filter error [{state.short}]: {e}")
             state._favorited_ids = favorited_ids  # для приоритизации в apply
             total_collected = len(unique_vacancies)
+            state.filter_stats = {
+                "raw_collected": raw_collected,
+                "unique_from_search": search_unique_count,
+                "duplicates": duplicate_hits,
+                "related_added": related_added,
+                "favorited_added": favorited_added,
+                "blacklisted": blacklisted_skipped,
+                "candidates": total_collected,
+                "accepted": 0,
+            }
 
             self._add_log(
                 state.short, state.color,
-                f"\U0001f4ca Всего собрано: {len(all_vacancies)} ({total_collected} уникальных)",
+                f"\U0001f4ca Всего собрано: {raw_collected} ({search_unique_count} уникальных, дублей {duplicate_hits})",
                 "info",
             )
 
@@ -1927,6 +1948,13 @@ class BotManager:
             salary_skipped = 0
             schedule_skipped = 0
             title_skipped = 0
+            missing_title_skipped = 0
+            recovered_title_count = 0
+            archived_skipped = 0
+            degraded_skipped_cycle = 0
+            auto_response_skipped = 0
+            accredited_skipped = 0
+            employer_rating_skipped = 0
             state.rating_skipped = 0  # per-cycle counter, reset here
             apply_tests = state.apply_tests or CONFIG.auto_apply_tests
             title_include_keywords = [
@@ -1947,8 +1975,25 @@ class BotManager:
                 title = (meta.get("title") or "").lower()
                 log_debug(f"Processing vacancy {vid}: {title}")
                 if not title:
-                    continue
+                    # Some HH web cards arrive without a title in SSR metadata.
+                    # Recover it from the authenticated vacancy API before dropping
+                    # the candidate; the details response is cached for six hours.
+                    recovered = fetch_vacancy_details(acc, vid)
+                    if recovered.get("archived"):
+                        archived_skipped += 1
+                        continue
+                    recovered_title = str(recovered.get("title") or "").strip()
+                    if recovered_title:
+                        meta["title"] = recovered_title
+                        meta["company"] = meta.get("company") or recovered.get("company", "")
+                        meta["url"] = meta.get("url") or recovered.get("url", "")
+                        title = recovered_title.lower()
+                        recovered_title_count += 1
+                    else:
+                        missing_title_skipped += 1
+                        continue
                 if meta.get("archived"):
+                    archived_skipped += 1
                     continue
                 # Android requests these flags on resume-based searches. A
                 # misleading vacancy needs a human decision; an immediate
@@ -1984,6 +2029,7 @@ class BotManager:
                     meta.get("has_test") or meta.get("response_letter_required")
                 ):
                     state.degraded_skipped += 1
+                    degraded_skipped_cycle += 1
                     continue
                 # Vacancy quality gates через GET /vacancies/{vid} — lazy: вызываем
                 # только если хотя бы один из флагов включён (иначе extra-fetch для
@@ -2003,11 +2049,14 @@ class BotManager:
                         meta["key_skills"] = det.get("key_skills") or []
                         meta["description"] = det.get("description") or ""
                         if det.get("archived"):
+                            archived_skipped += 1
                             continue
                         if CONFIG.skip_auto_response_vacancies and det.get("auto_response"):
+                            auto_response_skipped += 1
                             state.rating_skipped = getattr(state, "rating_skipped", 0) + 1
                             continue
                         if CONFIG.accredited_it_only and not det.get("accredited_it_employer"):
+                            accredited_skipped += 1
                             state.rating_skipped = getattr(state, "rating_skipped", 0) + 1
                             continue
                 # Employer rating gate: пропускаем низкорейтинговых работодателей.
@@ -2020,10 +2069,12 @@ class BotManager:
                         if rating_info and rating_info.get("reviews_count", 0) >= CONFIG.min_employer_reviews:
                             if (CONFIG.min_employer_rating > 0
                                 and rating_info.get("rating", 0) < CONFIG.min_employer_rating):
+                                employer_rating_skipped += 1
                                 state.rating_skipped = getattr(state, "rating_skipped", 0) + 1
                                 continue
                             if (CONFIG.min_recommendations_percent > 0
                                 and rating_info.get("recommendations_percent", 0) < CONFIG.min_recommendations_percent):
+                                employer_rating_skipped += 1
                                 state.rating_skipped = getattr(state, "rating_skipped", 0) + 1
                                 continue
                         # Cache hit для UI / Apply tab
@@ -2057,6 +2108,25 @@ class BotManager:
                         filtered.append(vid)
                 else:
                     filtered.append(vid)
+
+            state.filter_stats.update({
+                "missing_title": missing_title_skipped,
+                "title_recovered": recovered_title_count,
+                "archived": archived_skipped,
+                "unsafe": unsafe_skipped,
+                "title": title_skipped,
+                "discarded": discard_skipped,
+                "degraded": degraded_skipped_cycle,
+                "auto_response": auto_response_skipped,
+                "accredited": accredited_skipped,
+                "employer_rating": employer_rating_skipped,
+                "already_applied": already_count,
+                "tests": test_count,
+                "schedule": schedule_skipped,
+                "salary": salary_skipped,
+                "accepted": len(filtered),
+                "filtered_out": max(0, total_collected - len(filtered)),
+            })
 
             # Приоритизация: свежие → favorited → quick-response → остальные.
             # Сначала перемешиваем, чтобы старые вакансии одного класса не имели
