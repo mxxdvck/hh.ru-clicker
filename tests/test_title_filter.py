@@ -1,6 +1,6 @@
 import pytest
 
-from app.manager import _normalize_title_text, _title_matches_target
+from app.manager import _dedupe_same_postings, _normalize_title_text, _title_matches_target
 
 
 INCLUDES = [
@@ -52,3 +52,17 @@ def test_non_target_or_senior_titles_stay_blocked(title, reason):
 
 def test_title_normalization_unifies_latin_1c_and_punctuation():
     assert _normalize_title_text("  Junior/1C-Developer ") == "junior 1\u0441 developer"
+
+
+
+def test_same_employer_title_candidates_are_deduped():
+    ids = ["1", "2", "3", "4"]
+    meta = {
+        "1": {"title": "Programmer 1C", "company": "Same Co"},
+        "2": {"title": "Programmer-1C", "company": "Same Co"},
+        "3": {"title": "Programmer 1C", "company": "Other Co"},
+        "4": {"title": "Programmer 1C", "company": ""},
+    }
+    kept, duplicates = _dedupe_same_postings(ids, meta)
+    assert kept == ["1", "3", "4"]
+    assert duplicates == 1

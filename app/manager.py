@@ -328,6 +328,27 @@ def _title_matches_target(title: str, includes: list[str], excludes: list[str]) 
     return True, ""
 
 
+def _dedupe_same_postings(vacancy_ids: list[str], vacancy_meta: dict) -> tuple[list[str], int]:
+    """Keep one vacancy per employer + normalized title across different HH IDs."""
+    kept = []
+    seen = set()
+    duplicates = 0
+    for vid in vacancy_ids:
+        meta = vacancy_meta.get(vid, {}) or {}
+        title_key = _normalize_title_text(meta.get("title", ""))
+        employer_key = str(meta.get("employer_id") or "").strip()
+        if not employer_key:
+            employer_key = _normalize_title_text(meta.get("company", ""))
+        key = (employer_key, title_key) if employer_key and title_key else None
+        if key and key in seen:
+            duplicates += 1
+            continue
+        if key:
+            seen.add(key)
+        kept.append(vid)
+    return kept, duplicates
+
+
 # -- Async page fetcher (used only by BotManager) --
 
 async def fetch_page(session, url, sem, req_kw: dict | None = None):
@@ -2172,6 +2193,12 @@ class BotManager:
                 else:
                     filtered.append(vid)
 
+            # HH may publish the same role under several vacancy IDs (for example,
+            # one city per ID). Applying to every clone only spams one employer.
+            filtered, same_posting_duplicates = _dedupe_same_postings(
+                filtered, state.vacancy_meta
+            )
+
             state.filter_stats.update({
                 "missing_title": missing_title_skipped,
                 "title_recovered": recovered_title_count,
@@ -2189,6 +2216,7 @@ class BotManager:
                 "tests": test_count,
                 "schedule": schedule_skipped,
                 "salary": salary_skipped,
+                "same_posting_duplicates": same_posting_duplicates,
                 "accepted": len(filtered),
                 "filtered_out": max(0, total_collected - len(filtered)),
             })

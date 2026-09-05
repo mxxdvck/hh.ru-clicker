@@ -3963,6 +3963,7 @@ function updateCard(card, acc) {
         ['Архив', Number(fs.archived || 0)],
         ['\u041d\u0435 \u0446\u0435\u043b\u0435\u0432\u0430\u044f \u0440\u043e\u043b\u044c', Number(fs.title_no_include || 0)],
         ['\u0423\u0440\u043e\u0432\u0435\u043d\u044c/\u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435', Number(fs.title_excluded || 0)],
+        ['\u0414\u0443\u0431\u043b\u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438/\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u0438', Number(fs.same_posting_duplicates || 0)],
         ['Уже откликались', Number(fs.already_applied || 0)],
         ['Отказ HH', Number(fs.discarded || 0)],
         ['Тесты', Number(fs.tests || 0)],
