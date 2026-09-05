@@ -61,7 +61,7 @@ def _docker_available() -> bool:
 # ─── Вариант A: docker compose e2e ──────────────────────────────────────────
 
 
-def test_container_bind_docker_compose_smoke():
+def test_container_bind_docker_compose_smoke(tmp_path):
     """`docker compose up hh-bot` → curl 127.0.0.1:8000 → `compose down`."""
     if not _docker_available():
         # В обычном dev/CI без Docker всё равно проверяем критичный контракт
@@ -70,34 +70,59 @@ def test_container_bind_docker_compose_smoke():
         # LAN-режим: bind 8000:8000 (без 127.0.0.1 префикса) + env_file с ключом.
         # Аудит 2026-08-17 #4: ALLOW_CONTAINER_BIND теперь требует API_KEY,
         # web_app.py fail-closed без ключа — .env файл обязателен.
-        assert re.search(r'^\s*-\s*"?8000:8000"?\s*$', compose, re.MULTILINE), \
-            "compose должен публиковать 8000:8000"
+        assert re.search(
+            r'^\s*-\s*"?\$\{HH_BOT_PUBLISH_PORT:-8000\}:8000"?\s*$',
+            compose,
+            re.MULTILINE,
+        ), "compose must publish a host port with default 8000"
         assert re.search(r'^\s*env_file:\s*$', compose, re.MULTILINE), \
             "compose должен подгружать env_file (.env с HH_BOT_API_KEY)"
         assert re.search(r'^\s*HH_BOT_HOST:\s*["\']?0\.0\.0\.0["\']?\s*$', compose, re.MULTILINE)
         assert re.search(r'^\s*HH_BOT_ALLOW_CONTAINER_BIND:\s*["\']?1["\']?\s*$', compose, re.MULTILINE)
         return
-    up = subprocess.run(
-        ["docker", "compose", "up", "-d", "hh-bot"],
-        cwd=ROOT, capture_output=True, text=True, timeout=_COMPOSE_UP_TIMEOUT_S,
+
+    publish_port = _free_port()
+    smoke_env = tmp_path / "compose.env"
+    smoke_data = tmp_path / "data"
+    smoke_data.mkdir()
+    smoke_env.write_text(
+        "HH_BOT_API_KEY=compose-smoke-test-key\n"
+        "HH_BOT_DATA_KEY=compose-smoke-data-key-0123456789abcdef0123456789abcdef\n"
+        "HH_BOT_REQUIRE_ENCRYPTION=1\n",
+        encoding="utf-8",
     )
-    assert up.returncode == 0, f"docker compose up failed:\n{up.stdout}\n{up.stderr}"
+    compose_env = os.environ.copy()
+    compose_env.update({
+        "HH_BOT_ENV_FILE": str(smoke_env),
+        "HH_BOT_DATA_DIR_HOST": str(smoke_data),
+        "HH_BOT_PUBLISH_PORT": str(publish_port),
+        "HH_BOT_UID": str(getattr(os, "getuid", lambda: 1000)()),
+        "HH_BOT_GID": str(getattr(os, "getgid", lambda: 1000)()),
+        "COMPOSE_PROJECT_NAME": f"hh-clicker-smoke-{os.getpid()}",
+    })
+
     try:
+        up = subprocess.run(
+            ["docker", "compose", "up", "-d", "--no-deps", "hh-bot"],
+            cwd=ROOT, env=compose_env, capture_output=True, text=True,
+            timeout=_COMPOSE_UP_TIMEOUT_S,
+        )
+        assert up.returncode == 0, f"docker compose up failed:\n{up.stdout}\n{up.stderr}"
         deadline = time.monotonic() + _READY_TIMEOUT_S * 3  # контейнер стартует дольше
         last_err = None
         while time.monotonic() < deadline:
             try:
-                status, _ = _http_get(f"http://127.0.0.1:8000{_HEALTHZ}")
+                status, _ = _http_get(f"http://127.0.0.1:{publish_port}{_HEALTHZ}")
                 assert status == 200
                 return  # дашборд доступен с host loopback — фикс работает
             except Exception as e:
                 last_err = e
                 time.sleep(2)
-        pytest.fail(f"дашборд не поднялся на 127.0.0.1:8000: {last_err}")
+        pytest.fail(f"dashboard did not start on 127.0.0.1:{publish_port}: {last_err}")
     finally:
         subprocess.run(
             ["docker", "compose", "down"],
-            cwd=ROOT, capture_output=True, timeout=120,
+            cwd=ROOT, env=compose_env, capture_output=True, timeout=120,
         )
 
 

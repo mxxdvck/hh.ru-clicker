@@ -17,9 +17,9 @@ services:
     ports:
       # LAN-доступ: bind на 0.0.0.0 — публикуем в сеть, защищено HH_BOT_API_KEY
       # + HH_BOT_UNSAFE_EXPOSE=1 (см. env ниже).
-      - "8000:8000"
+      - "${HH_BOT_PUBLISH_PORT:-8000}:8000"
     env_file:
-      - .env
+      - "${HH_BOT_ENV_FILE:-.env}"
     environment:
       HH_BOT_UNSAFE_EXPOSE: "1"
       # Внутри контейнера слушаем 0.0.0.0: Docker DNAT направляет published-
@@ -27,8 +27,8 @@ services:
       # внутри контейнера сделал бы дашборд недоступным даже с хоста.
       HH_BOT_HOST: "0.0.0.0"
       # Явный container opt-in (web_app.py::_resolve_host): разрешает bind
-      # 0.0.0.0 без HH_BOT_API_KEY. Безопасность обеспечивает host-side bind
-      # 127.0.0.1:8000:8000 в `ports` выше, а не bind внутри контейнера.
+      # 0.0.0.0 только при настроенном HH_BOT_API_KEY. Безопасность обеспечивает auth
+      # и явный внешний режим через HH_BOT_UNSAFE_EXPOSE=1.
       # Без этого opt-in bind наружу без ключа запрещён (RuntimeError,
       # даже при HH_BOT_UNSAFE_EXPOSE=1).
       HH_BOT_ALLOW_CONTAINER_BIND: "1"
@@ -43,7 +43,7 @@ services:
       # "0" = direct (дефолт); "1" = WS тоже через HH_PROXY. singbox-сервис не трогаем.
       HH_WS_USE_PROXY: "0"
     volumes:
-      - ./data:/app/data
+      - "${HH_BOT_DATA_DIR_HOST:-./data}:/app/data"
       - ./web_app.py:/app/web_app.py
       - ./app:/app/app
       - ./static:/app/static
