@@ -206,6 +206,7 @@ def test_search_only_paused_account_shows_found_vacancy_preview(ui):
         filter_stats={
             "raw_collected": 248, "unique_from_search": 145, "duplicates": 103,
             "candidates": 145, "missing_title": 29, "title": 100,
+            "title_no_include": 82, "title_excluded": 18,
             "already_applied": 6, "discarded": 4, "accepted": 6,
         },
     )
@@ -226,7 +227,8 @@ def test_search_only_paused_account_shows_found_vacancy_preview(ui):
     expect(ui.page.locator("#acc-search-filter-summary-0")).to_have_text("248 → 6")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Дубли: 103")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Без названия: 29")
-    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("По названию: 100")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("\u041d\u0435 \u0446\u0435\u043b\u0435\u0432\u0430\u044f \u0440\u043e\u043b\u044c: 82")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("\u0423\u0440\u043e\u0432\u0435\u043d\u044c/\u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435: 18")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Уже откликались: 6")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Отказ HH: 4")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Подходит: 6")

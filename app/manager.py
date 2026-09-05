@@ -6,6 +6,8 @@ import asyncio
 import aiohttp
 import json
 import random
+import re
+import unicodedata
 from datetime import datetime, timedelta
 from collections import deque
 from pathlib import Path
@@ -270,6 +272,61 @@ def _search_filter_query_suffix() -> str:
     if CONFIG.search_period_days > 0:
         params.append(f"&search_period={CONFIG.search_period_days}")
     return "".join(params)
+
+def _normalize_title_text(value: str) -> str:
+    """Normalize vacancy titles and configured keywords for stable matching."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = re.sub(r"(?<![0-9a-z\u0430-\u044f\u0451])1c(?![0-9a-z\u0430-\u044f\u0451])", "1\u0441", text)
+    text = re.sub(r"[-_/()+,.;:|]+", " ", text)
+    return " ".join(text.split())
+
+
+def _title_phrase_present(text: str, phrase: str) -> bool:
+    """Match a normalized phrase on token boundaries, not inside another word."""
+    if not phrase:
+        return False
+    return f" {phrase} " in f" {text} "
+
+
+def _title_matches_target(title: str, includes: list[str], excludes: list[str]) -> tuple[bool, str]:
+    """Return whether a title is in scope and, when rejected, why."""
+    normalized = _normalize_title_text(title)
+    include_norm = [_normalize_title_text(v) for v in includes if str(v).strip()]
+    exclude_norm = [_normalize_title_text(v) for v in excludes if str(v).strip()]
+    include_match = not include_norm or any(_title_phrase_present(normalized, p) for p in include_norm)
+    role_tokens = ("\u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c\u0438\u0441\u0442", "\u0440\u0430\u0437\u0440\u0430\u0431\u043e\u0442\u0447\u0438\u043a")
+    entry_tokens = ("junior", "\u0441\u0442\u0430\u0436\u0435\u0440", "\u0441\u0442\u0430\u0436\u0451\u0440", "\u043c\u043b\u0430\u0434\u0448\u0438\u0439", "\u043f\u043e\u043c\u043e\u0449\u043d\u0438\u043a")
+    has_role = any(_title_phrase_present(normalized, token) for token in role_tokens)
+    has_entry = any(_title_phrase_present(normalized, token) for token in entry_tokens)
+    has_1c = _title_phrase_present(normalized, "1\u0441")
+    config_targets_1c = any(_title_phrase_present(p, "1\u0441") for p in include_norm)
+    foreign_stack_tokens = ("php", "java", "unity", "bitrix", "\u0431\u0438\u0442\u0440\u0438\u043a\u0441")
+    if include_norm and config_targets_1c and has_1c and any(
+        _title_phrase_present(normalized, token) for token in foreign_stack_tokens
+    ):
+        return False, "no_include"
+    if not include_match and has_1c and has_entry and has_role:
+        include_match = any(_title_phrase_present(p, "1\u0441") for p in include_norm)
+    matched = {p for p in exclude_norm if _title_phrase_present(normalized, p)}
+    if not include_match:
+        if has_1c and has_role and matched:
+            return False, "excluded"
+        return False, "no_include"
+    if not matched:
+        return True, ""
+    hard = {"lead", "team lead", "tech lead", "\u0442\u0438\u043c\u043b\u0438\u0434", "\u0441\u0442\u0430\u0440\u0448\u0438\u0439", "\u0432\u0435\u0434\u0443\u0449\u0438\u0439", "\u0440\u0443\u043a\u043e\u0432\u043e\u0434\u0438\u0442\u0435\u043b\u044c", "\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u043e\u0440", "\u0433\u043b\u0430\u0432\u043d\u044b\u0439"}
+    soft = {"middle", "\u043c\u0438\u0434\u043b", "senior"}
+    analyst = {"\u0430\u043d\u0430\u043b\u0438\u0442\u0438\u043a"}
+    if matched & hard:
+        return False, "excluded"
+    if matched & soft and not (has_entry and has_role):
+        return False, "excluded"
+    if matched & analyst and not (has_entry and has_role):
+        return False, "excluded"
+    if matched - hard - soft - analyst:
+        return False, "excluded"
+    return True, ""
+
 
 # -- Async page fetcher (used only by BotManager) --
 
@@ -1948,6 +2005,8 @@ class BotManager:
             salary_skipped = 0
             schedule_skipped = 0
             title_skipped = 0
+            title_no_include_skipped = 0
+            title_excluded_skipped = 0
             missing_title_skipped = 0
             recovered_title_count = 0
             archived_skipped = 0
@@ -2010,11 +2069,15 @@ class BotManager:
                         f"{vid}: redirect → {meta.get('immediate_redirect_vacancy_id')}"
                     )
                     continue
-                if title_include_keywords and not any(k in title for k in title_include_keywords):
+                title_ok, title_reason = _title_matches_target(
+                    title, title_include_keywords, title_exclude_keywords
+                )
+                if not title_ok:
                     title_skipped += 1
-                    continue
-                if title_exclude_keywords and any(k in title for k in title_exclude_keywords):
-                    title_skipped += 1
+                    if title_reason == "no_include":
+                        title_no_include_skipped += 1
+                    else:
+                        title_excluded_skipped += 1
                     continue
                 # HH сам метит вакансии меткой DISCARD когда нас уже отвергли —
                 # повторный отклик чаще всего бесполезен, экономим лимит/токены.
@@ -2115,6 +2178,8 @@ class BotManager:
                 "archived": archived_skipped,
                 "unsafe": unsafe_skipped,
                 "title": title_skipped,
+                "title_no_include": title_no_include_skipped,
+                "title_excluded": title_excluded_skipped,
                 "discarded": discard_skipped,
                 "degraded": degraded_skipped_cycle,
                 "auto_response": auto_response_skipped,
