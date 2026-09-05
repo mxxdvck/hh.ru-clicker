@@ -3,12 +3,13 @@ HH.ru API helper functions: headers, parsing IDs, vacancy metadata, salaries, sc
 """
 
 import re
+import json
+import html as _html
 import urllib.parse
 
 from bs4 import BeautifulSoup
 
 from app.logging_utils import log_debug
-from app.config import CONFIG
 from app.user_agent import webview_user_agent
 from app.config import CONFIG, hh_base
 
@@ -77,6 +78,82 @@ def get_headers(xsrf: str) -> dict:
     }
 
 
+def _iter_dicts(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_dicts(child)
+
+
+def _extract_initial_state(html: str) -> dict:
+    """Parse HH Lux initial-state JSON without guessing object boundaries."""
+    m = re.search(r'<template[^>]*id=["\']HH-Lux-InitialState["\'][^>]*>([\s\S]*?)</template>', html)
+    if not m:
+        return {}
+    raw = _html.unescape(m.group(1))
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        log_debug(f"parse_search_page initial-state JSON failed: {e}")
+        return {}
+
+
+def _vacancy_id_for_payload(payload: dict) -> str:
+    for key in ("vacancyId", "vacancy_id"):
+        value = payload.get(key)
+        if value is not None and str(value).isdigit():
+            return str(value)
+    vacancy = payload.get("vacancy")
+    if isinstance(vacancy, dict):
+        value = vacancy.get("id")
+        if value is not None and str(value).isdigit():
+            return str(value)
+    value = payload.get("id")
+    if value is not None and str(value).isdigit():
+        return str(value)
+    return ""
+
+
+def _salary_from_payload(payload: dict) -> int | None:
+    comp = payload.get("compensation")
+    if not isinstance(comp, dict):
+        comp = payload.get("salary")
+    if not isinstance(comp, dict) or comp.get("noCompensation"):
+        return None
+    raw_from = comp.get("from")
+    try:
+        amount = int(raw_from)
+    except (TypeError, ValueError):
+        return None
+    currency = comp.get("currencyCode") or comp.get("currency") or "RUR"
+    if isinstance(currency, dict):
+        currency = currency.get("code") or currency.get("id") or "RUR"
+    currency = str(currency).upper()
+    if currency == "USD":
+        amount *= 90
+    elif currency == "EUR":
+        amount *= 100
+    return amount
+
+
+def _structured_salaries(html: str) -> dict[str, int]:
+    """Return salary only when vacancy id and compensation share one JSON object."""
+    state = _extract_initial_state(html)
+    result: dict[str, int] = {}
+    for payload in _iter_dicts(state):
+        if not isinstance(payload.get("compensation"), dict) and not isinstance(payload.get("salary"), dict):
+            continue
+        vid = _vacancy_id_for_payload(payload)
+        amount = _salary_from_payload(payload)
+        if vid and amount is not None:
+            result[vid] = amount
+    return result
+
+
 # Single-entry cache so that the 4 thin wrappers share one BeautifulSoup parse
 # when called sequentially with the same html string (typical caller pattern).
 _last_html_ref = None
@@ -140,30 +217,31 @@ def parse_search_page(html: str) -> dict:
                 meta[vid] = {"title": title, "company": ""}
 
     # ---- Salaries ----------------------------------------------------------
-    salaries = {}
-    # Safer regex: avoids catastrophic backtracking on nested braces.
-    for m in re.finditer(r'"(?:compensation|salary)"\s*:\s*\{((?:[^{}]|\{[^{}]*\})*)\}', html):
-        comp_str = m.group(1)
-        if '"noCompensation"' in comp_str or '"from"' not in comp_str:
-            continue
-        from_m = re.search(r'"from"\s*:\s*(\d+)', comp_str)
-        if not from_m:
-            continue
+    # Prefer structured HH-Lux state where vacancy id and compensation belong
+    # to the same object. Never associate a salary with "the nearest previous"
+    # /vacancy/<id>: on real search pages multiple cards/scripts can interleave.
+    salaries = _structured_salaries(html)
 
-        context = html[max(0, m.start() - 2000): m.start()]
-        vid_matches = re.findall(r'/vacancy/(\d+)', context)
-        if not vid_matches:
-            continue
-        vid = vid_matches[-1]
-
-        salary = int(from_m.group(1))
-        curr_m = re.search(r'"currencyCode"\s*:\s*"(\w+)"', comp_str)
-        curr = curr_m.group(1) if curr_m else "RUR"
-        if curr == "USD":
-            salary = salary * 90
-        elif curr == "EUR":
-            salary = salary * 100
-        salaries[vid] = salary
+    # Safe legacy fallback for old/minimal pages: when the whole page contains
+    # exactly one vacancy, a standalone compensation object is unambiguous.
+    if not salaries and len(ids) == 1:
+        sole_vid = next(iter(ids))
+        for m in re.finditer(r'"(?:compensation|salary)"\s*:\s*\{((?:[^{}]|\{[^{}]*\})*)\}', html):
+            comp_str = m.group(1)
+            if '"noCompensation"' in comp_str:
+                continue
+            from_m = re.search(r'"from"\s*:\s*(\d+)', comp_str)
+            if not from_m:
+                continue
+            amount = int(from_m.group(1))
+            curr_m = re.search(r'"currencyCode"\s*:\s*"(\w+)"', comp_str)
+            curr = (curr_m.group(1) if curr_m else "RUR").upper()
+            if curr == "USD":
+                amount *= 90
+            elif curr == "EUR":
+                amount *= 100
+            salaries[sole_vid] = amount
+            break
 
     # ---- Schedules ---------------------------------------------------------
     schedules = {}

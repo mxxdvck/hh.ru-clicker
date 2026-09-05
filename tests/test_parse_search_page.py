@@ -100,3 +100,34 @@ def test_parse_salaries_accepts_salary_key(monkeypatch):
     """
     result = parse_search_page(html)
     assert result["salaries"].get("88888") == 200000
+
+
+def test_structured_salary_stays_with_its_vacancy(monkeypatch):
+    _reset_cache(monkeypatch)
+    monkeypatch.setattr(CONFIG, "min_salary", 1)
+    html = """
+    <a href="/vacancy/11111">One</a>
+    <a href="/vacancy/22222">Two</a>
+    <template id="HH-Lux-InitialState">
+    {"vacancies":[
+      {"id":"22222","compensation":{"from":200000,"currencyCode":"RUR"}},
+      {"id":"11111","compensation":{"from":100000,"currencyCode":"RUR"}}
+    ]}
+    </template>
+    """
+    result = parse_search_page(html)
+    assert result["salaries"] == {"22222": 200000, "11111": 100000}
+
+
+def test_ambiguous_legacy_salary_is_not_guessed(monkeypatch):
+    _reset_cache(monkeypatch)
+    monkeypatch.setattr(CONFIG, "min_salary", 1)
+    html = """
+    <a href="/vacancy/11111">One</a>
+    <a href="/vacancy/22222">Two</a>
+    <script>
+    "compensation": {"from": 180000, "currencyCode": "RUR"}
+    </script>
+    """
+    result = parse_search_page(html)
+    assert result["salaries"] == {}
