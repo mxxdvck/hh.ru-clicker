@@ -75,11 +75,11 @@ class Config:
     """Глобальные настройки (можно менять в runtime)"""
     pages_per_url = 40
     max_concurrent = 20
-    response_delay = 1
+    response_delay = 10
     pause_between_cycles = 60
     limit_check_interval = 30
     resume_touch_interval = 4
-    batch_responses = 3
+    batch_responses = 1
     min_salary = 0  # Минимальная зарплата в руб (0 = без фильтра)
     auto_pause_errors = 5  # Авто-пауза после N ошибок подряд (0 = выключено)
     auto_apply_tests: bool = False  # Автоматически проходить опросники при откликах
@@ -118,11 +118,11 @@ class Config:
     # HH-Pro AI cover letter: `POST /shards/hhpro_ai_letter` даёт 1 бесплатное
     # письмо на пару (resumeHash, vacancyId) даже без подписки. Пробуем первым —
     # доменная модель HH пишет письмо под конкретную вакансию с учётом резюме.
-    hh_ai_letter_first_try: bool = True
+    hh_ai_letter_first_try: bool = False
     # related_vacancies: раз в цикл сбора запрашиваем HH-рекомендательный фид
     # `GET /shards/vacancy/related_vacancies?vacancyId=<seed>` — обычно
     # match'ит лучше текстового поиска (внутренний ML ranker).
-    related_vacancies_enabled: bool = True
+    related_vacancies_enabled: bool = False
     # Прокси для исходящих запросов к hh.ru (обход soft-ban DDoS-Guard по IP).
     # Формат: `socks5h://host:port` / `http://user:pass@host:port`. Пусто = напрямую.
     # При старте `hh_http._PROXY` берётся сначала из env `HH_PROXY`, иначе из этого поля.

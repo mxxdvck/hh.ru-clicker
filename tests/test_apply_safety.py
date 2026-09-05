@@ -407,3 +407,107 @@ def test_sync_hh_apply_count_updates_authoritative_state(monkeypatch):
     assert info["today"] == 17
     assert state.hh_today_applies == 17
     assert state.hh_today_applies_updated
+
+
+def test_transient_apply_error_classifier():
+    import app.manager as manager_mod
+
+    assert manager_mod._is_transient_apply_error({"transient": True}) is True
+    assert manager_mod._is_transient_apply_error({"exception": "timeout"}) is True
+    assert manager_mod._is_transient_apply_error({"http_status": 503}) is True
+    assert manager_mod._is_transient_apply_error({"error_code": "unknown"}) is True
+    assert manager_mod._is_transient_apply_error({"http_status": 400, "raw": "bad request"}) is False
+
+
+def test_questionnaire_failure_gets_one_retry_then_blocks(monkeypatch):
+    _enable_test_sends(monkeypatch)
+    import app.manager as manager_mod
+
+    state = SimpleNamespace(_test_failures={})
+    assert safety.reserve_apply("acc", "q1", "resume", source="apply").allowed
+    safety.finalize_apply("acc", "q1", "resume", "test", {}, state=None)
+    assert safety.reserve_apply("acc", "q1", "resume", source="questionnaire").allowed
+
+    failures, info = manager_mod._questionnaire_failure_attempt(state, "q1", {})
+    assert failures == 1 and info["transient"] is True
+    safety.finalize_apply("acc", "q1", "resume", "error", info, state=None)
+    assert safety.reserve_apply("acc", "q1", "resume", source="retry").allowed
+
+    safety.finalize_apply("acc", "q1", "resume", "test", {}, state=None)
+    assert safety.reserve_apply("acc", "q1", "resume", source="questionnaire").allowed
+    failures, info = manager_mod._questionnaire_failure_attempt(state, "q1", {})
+    assert failures == 2 and info["transient"] is False
+    safety.finalize_apply("acc", "q1", "resume", "error", info, state=None)
+    blocked = safety.reserve_apply("acc", "q1", "resume", source="third")
+    assert blocked.allowed is False
+    assert blocked.code == "in_flight"
+    assert "failed_permanent" in blocked.message
+
+
+def test_worker_crash_marks_current_run_interrupted(monkeypatch):
+    _enable_test_sends(monkeypatch)
+    import app.manager as manager_mod
+
+    state = SimpleNamespace(
+        name="acc", short="a", color="green", apply_run_id="worker-run",
+        _apply_reconciled_run_id="worker-run", _deleted=False,
+        status="applying", status_detail="",
+    )
+    assert safety.reserve_apply("acc", "crash1", "resume", state=state, source="worker").allowed
+
+    mgr = manager_mod.BotManager.__new__(manager_mod.BotManager)
+    mgr._stop_event = threading.Event()
+    mgr._add_log = lambda *args, **kwargs: None
+    mgr._run_account_worker_inner = lambda idx, current: (_ for _ in ()).throw(RuntimeError("boom"))
+    monkeypatch.setattr(manager_mod.time, "sleep", lambda seconds: setattr(state, "_deleted", True))
+
+    mgr._run_account_worker(0, state)
+    interrupted = ledger.list_interrupted("acc")
+    assert [row["vacancy_id"] for row in interrupted] == ["crash1"]
+    assert state._apply_reconciled_run_id == ""
+
+
+def test_web_apply_missing_xsrf_is_auth_error(monkeypatch):
+    _enable_test_sends(monkeypatch)
+    result, info = _run(hh_apply.send_response_async(
+        {"name": "acc", "resume_hash": "resume", "cookies": {}}, "100"
+    ))
+    assert result == "auth_error"
+    assert info["error_type"] == "auth_error"
+
+
+def test_clean_install_uses_conservative_apply_defaults():
+    from app.config import Config
+
+    defaults = Config()
+    assert defaults.search_only_mode is True
+    assert defaults.batch_responses == 1
+    assert defaults.response_delay >= 10
+    assert defaults.related_vacancies_enabled is False
+    assert defaults.hh_ai_letter_first_try is False
+
+
+def test_search_filter_label_priority_is_deterministic(monkeypatch):
+    import app.manager as manager_mod
+
+    monkeypatch.setattr(CONFIG, "filter_low_competition", True)
+    monkeypatch.setattr(CONFIG, "filter_agencies", True)
+    monkeypatch.setattr(CONFIG, "search_period_days", 7)
+    suffix = manager_mod._search_filter_query_suffix()
+    assert "&label=low_performance" in suffix
+    assert "&label=not_from_agency" not in suffix
+    assert "&search_period=7" in suffix
+
+
+def test_manual_recoverable_errors_release_reservation(monkeypatch):
+    _enable_test_sends(monkeypatch)
+    for vid, error_type in (
+        ("manual-validation", "questionnaire_validation"),
+        ("manual-http", "manual_recoverable"),
+    ):
+        assert safety.reserve_apply("acc", vid, "resume", source="manual").allowed
+        status = safety.finalize_apply(
+            "acc", vid, "resume", "error", {"error_type": error_type}, state=None
+        )
+        assert status == "released"
+        assert safety.reserve_apply("acc", vid, "resume", source="manual-retry").allowed

@@ -54,7 +54,8 @@ async def index():
 # WEBSOCKET
 # ============================================================
 
-_DEFAULT_WS_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"}
+# Bandit B104 is a false positive here: these are accepted Origin hosts, not bind targets.
+_DEFAULT_WS_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"}  # nosec B104
 
 
 def _allowed_ws_hosts() -> set:

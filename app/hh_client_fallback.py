@@ -96,11 +96,14 @@ _MUTATING_METHODS = {
     "touch_resume", "edit_resume_field", "set_job_search_status",
 }
 
-assert set(_METHODS) == set(HHClient.__abstractmethods__), (
-    "FallbackHHClient._METHODS разошёлся с контрактом HHClient: "
-    f"лишние={set(_METHODS) - set(HHClient.__abstractmethods__)}, "
-    f"потеряны={set(HHClient.__abstractmethods__) - set(_METHODS)}"
-)
+_expected_methods = set(HHClient.__abstractmethods__)
+_declared_methods = set(_METHODS)
+if _declared_methods != _expected_methods:
+    raise RuntimeError(
+        "FallbackHHClient._METHODS разошёлся с контрактом HHClient: "
+        f"лишние={_declared_methods - _expected_methods}, "
+        f"потеряны={_expected_methods - _declared_methods}"
+    )
 
 
 def _make_sync_delegate(name: str):

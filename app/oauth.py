@@ -1058,7 +1058,7 @@ def _oauth_apply(acc: dict, vid: str, message: str = "") -> tuple:
         message = resolve_letter_text(acc)
     token = _obtain_oauth_token(acc)
     if not token:
-        return "error", {"exception": "OAuth token не получен"}
+        return "auth_error", {"error_type": "oauth_token_unavailable"}
     resume_hash = acc.get("resume_hash", "")
     try:
         message = _randomize_text(message) if message else message
@@ -1147,7 +1147,7 @@ def _oauth_apply(acc: dict, vid: str, message: str = "") -> tuple:
         else:
             return "error", {"raw": f"HTTP {r.status_code}: {r.text[:100]}"}
     except Exception as e:
-        return "error", {"exception": str(e)}
+        return "error", {"exception": str(e), "transient": True}
 
 
 def _oauth_touch_resume(acc: dict) -> tuple:

@@ -310,7 +310,8 @@ def _is_safe_llm_base_url(url: str) -> bool:
         return False
     host = p.hostname.lower()
     # Reject private/internal addresses outright
-    if host in ("localhost", "0.0.0.0") or host.startswith("127.") or host.endswith(".local"):
+    # Bandit B104 is a false positive: this branch rejects SSRF targets; it never binds.
+    if host in ("localhost", "0.0.0.0") or host.startswith("127.") or host.endswith(".local"):  # nosec B104
         return False
     # Reject IP-literal addresses
     if any(host.startswith(p) for p in ("10.", "172.", "192.168.", "169.254.", "::1", "fc", "fd")):

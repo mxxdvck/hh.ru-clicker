@@ -400,3 +400,27 @@ def test_submit_validation_errors(monkeypatch, bot_stub):
     assert _run(api_apply_submit({"account_idx": "bad"}))["status"] == "error"
     monkeypatch.setattr(bot, "_get_apply_acc", lambda idx: None)
     assert _run(api_apply_submit({"account_idx": 0, "vacancy_id": "777"}))["message"] == "Неверный аккаунт"
+
+
+def test_questionnaire_form_rejection_does_not_poison_manual_retry(monkeypatch, bot_stub):
+    fake_web = FakeWebClient(dict(ACC))
+    monkeypatch.setattr(apply_route, "get_client", lambda acc: fake_web)
+    hidden = '<input type="hidden" name="_xsrf" value="token">'
+    rejected = _Response(
+        302, location="/applicant/vacancy_response?vacancyId=778&withoutTest=no"
+    )
+    monkeypatch.setattr(
+        apply_route, "aiohttp", _fake_aiohttp(_Response(200, hidden), rejected)
+    )
+
+    payload = {
+        "account_idx": 0,
+        "vacancy_id": "778",
+        "answers": {"task_1_text": "first answer"},
+    }
+    first = _run(api_apply_submit(payload))
+    second = _run(api_apply_submit({**payload, "answers": {"task_1_text": "fixed answer"}}))
+
+    assert first["status"] == "error"
+    assert second["status"] == "error"
+    assert second.get("reason") != "in_flight"

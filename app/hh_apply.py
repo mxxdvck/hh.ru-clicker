@@ -264,12 +264,12 @@ async def send_response_async(acc: dict, vid: str, letter_max_length: int | None
 
     xsrf = acc.get("cookies", {}).get("_xsrf", "")
     if not xsrf:
-        return "error", {"exception": "Missing _xsrf token"}
+        return "auth_error", {"error_type": "auth_error", "exception": "Missing _xsrf token"}
     headers = get_headers(xsrf)
 
     letter = _randomize_text(resolve_letter_text(acc))
     try:
-        if getattr(CONFIG, "hh_ai_letter_first_try", True):
+        if getattr(CONFIG, "hh_ai_letter_first_try", False) and not CONFIG.llm_generate_cover_letter:
             ai_letter = await generate_hh_ai_letter(acc, acc.get("resume_hash", ""), vid)
             if ai_letter:
                 letter = ai_letter
@@ -311,7 +311,7 @@ async def send_response_async(acc: dict, vid: str, letter_max_length: int | None
             log_debug(f"   200 (не-JSON, {len(txt)}b): {txt[:200]}")
         return classify_apply_response(status_code, txt)
     except Exception as e:
-        return "error", {"exception": str(e)}
+        return "error", {"exception": str(e), "transient": True}
 
 
 async def fill_and_submit_questionnaire(acc: dict, vid: str,
@@ -350,8 +350,10 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
             # а отдать auth_error чтобы воркер обновил куки/спаузил аккаунт.
             if status_code in (401, 403) or _is_login_page(html):
                 return "auth_error", {}
+            if status_code == 429:
+                return "limit", {"http_status": status_code}
             if status_code != 200:
-                return "error", {"http_status": status_code}
+                return "error", {"http_status": status_code, "transient": status_code >= 500}
 
             # Hidden поля
             hidden = dict(re.findall(r'<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"', html))
@@ -501,11 +503,11 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                     return "test", {}
                 return "sent", {}
 
-            return "test", {}
+            return "error", {"http_status": status, "transient": status >= 500}
 
     except Exception as e:
         log_debug(f"fill_and_submit_questionnaire error: {e}")
-        return "error", {"exception": str(e)}
+        return "error", {"exception": str(e), "transient": True}
 
 
 def _check_vacancy_before_apply(acc: dict, vid: str) -> dict:

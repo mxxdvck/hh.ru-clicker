@@ -239,8 +239,12 @@ async def api_apply_check(body: dict):
                 "message": f"Вакансия требует опрос ({len(qdata['questions'])} вопросов)",
             }
 
-        finalize_apply(acc.get("name", ""), vid, resume_id, "error",
-                       {"raw": f"HTTP {status_code}: {txt[:100]}"}, state=None)
+        final_info = {"raw": f"HTTP {status_code}: {txt[:100]}", "http_status": status_code}
+        if status_code >= 500:
+            final_info["transient"] = True
+        else:
+            final_info["error_type"] = "manual_recoverable"
+        finalize_apply(acc.get("name", ""), vid, resume_id, "error", final_info, state=None)
         return {"status": "error", "vacancy_id": vid, "message": f"HTTP {status_code}: {txt[:100]}"}
 
     except Exception as e:
@@ -320,6 +324,18 @@ async def api_apply_submit(body: dict):
                 if r.status in (401, 403) or _is_login_page(html):
                     finalize_apply(acc.get("name", ""), vid, resume_id, "auth_error", {}, state=None)
                     return {"status": "error", "message": "⚠️ Куки протухли — обновите в настройках"}
+                if r.status == 429:
+                    finalize_apply(acc.get("name", ""), vid, resume_id, "limit",
+                                   {"http_status": r.status}, state=None)
+                    return {"status": "limit", "message": "Достигнут лимит запросов HH"}
+                if r.status != 200:
+                    info = {"http_status": r.status, "raw": f"questionnaire GET HTTP {r.status}"}
+                    if r.status >= 500:
+                        info["transient"] = True
+                    else:
+                        info["error_type"] = "manual_recoverable"
+                    finalize_apply(acc.get("name", ""), vid, resume_id, "error", info, state=None)
+                    return {"status": "error", "message": f"HTTP {r.status} при загрузке формы"}
 
             hidden = dict(re.findall(r'<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"', html))
             hidden.update(dict(re.findall(r'<input[^>]+name="([^"]+)"[^>]+type="hidden"[^>]+value="([^"]*)"', html)))
@@ -363,7 +379,8 @@ async def api_apply_submit(body: dict):
                 return {"status": "limit", "message": "Достигнут лимит откликов"}
             if "withoutTest=no" in location or f"vacancyId={vid}" in location:
                 finalize_apply(acc.get("name", ""), vid, resume_id, "error",
-                               {"raw": "questionnaire form rejected"}, state=None)
+                               {"error_type": "questionnaire_validation",
+                                "raw": "questionnaire form rejected"}, state=None)
                 return {"status": "error", "message": "Форма не принята — возможно не все вопросы заполнены"}
             state = bot._get_apply_state(acc_idx)
             finalize_apply(acc.get("name", ""), vid, resume_id, "sent", {},
@@ -373,8 +390,12 @@ async def api_apply_submit(body: dict):
             bot._add_log(short, color, f"\U0001f4dd Ручной отклик (опрос): {vid}", "success")
             return {"status": "sent", "message": "Отклик успешно отправлен ✅"}
 
-        finalize_apply(acc.get("name", ""), vid, resume_id, "error",
-                       {"raw": f"HTTP {status}", "transient": status >= 500}, state=None)
+        final_info = {"raw": f"HTTP {status}", "http_status": status}
+        if status >= 500:
+            final_info["transient"] = True
+        else:
+            final_info["error_type"] = "questionnaire_validation"
+        finalize_apply(acc.get("name", ""), vid, resume_id, "error", final_info, state=None)
         return {"status": "error", "message": f"HTTP {status}"}
 
     except Exception as e:

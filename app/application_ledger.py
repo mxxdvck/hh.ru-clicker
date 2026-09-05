@@ -217,6 +217,26 @@ def mark_interrupted_startup() -> int:
         conn.close()
 
 
+def mark_run_interrupted(account_name: str, run_id: str, detail: str = "worker crashed before send result was recorded") -> int:
+    """Move this run's unresolved sends to fail-closed crash-recovery state."""
+    account_name = str(account_name or "").strip()
+    run_id = str(run_id or "").strip()
+    if not account_name or not run_id:
+        return 0
+    conn = _connect()
+    try:
+        _ensure_schema(conn)
+        now = _now()
+        cur = conn.execute(
+            "UPDATE applications SET status='interrupted', updated_at=?, detail=? "
+            "WHERE account_name=? AND run_id=? AND status='applying'",
+            (now, str(detail or "")[:1000], account_name, run_id),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        conn.close()
+
+
 def count_applied_today(account_name: str, date_prefix: str) -> int:
     conn = _connect()
     try:

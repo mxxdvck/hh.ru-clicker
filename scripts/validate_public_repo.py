@@ -15,7 +15,7 @@ TEXT_SUFFIXES = {
     ".yml", ".yaml", ".toml", ".ini", ".ps1",
 }
 TEXT_NAMES = {".gitignore", ".gitattributes", ".editorconfig", ".env.example", "Dockerfile"}
-FORBIDDEN_PREFIXES = ("data/", "backups/")
+FORBIDDEN_PREFIXES = ("data/", "backups/", "tests/e2e/failures/")
 FORBIDDEN_NAMES = {
     "accounts.json", "browser_sessions.json", "oauth_tokens.json", "cookies.json",
 }
@@ -50,7 +50,7 @@ def check_public_defaults(issues: list[str]) -> None:
     for key in (
         "merge_saved_searches", "auto_resume_search_enabled", "merge_favorited_vacancies",
         "related_vacancies_enabled", "auto_apply_tests", "llm_enabled", "llm_auto_send",
-        "llm_generate_cover_letter", "llm_fill_questionnaire",
+        "llm_generate_cover_letter", "llm_fill_questionnaire", "hh_ai_letter_first_try",
     ):
         if data.get(key) is not False:
             issues.append(f"config.example.json must default {key}=false")
@@ -58,6 +58,11 @@ def check_public_defaults(issues: list[str]) -> None:
         value = data.get(key)
         if not isinstance(value, int) or value <= 0:
             issues.append(f"config.example.json must have a positive {key}")
+    if data.get("batch_responses") != 1:
+        issues.append("config.example.json must default batch_responses=1")
+    delay = data.get("response_delay")
+    if not isinstance(delay, (int, float)) or isinstance(delay, bool) or delay < 5:
+        issues.append("config.example.json must default response_delay to at least 5 seconds")
 
 
 def main() -> int:

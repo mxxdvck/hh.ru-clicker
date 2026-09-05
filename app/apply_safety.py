@@ -158,7 +158,10 @@ def finalize_apply(account_name: str, vacancy_id: str, resume_id: str,
     status = status_map.get(result)
     if status is None:
         error_type = str(info.get("error_type") or "").lower()
-        if error_type in {"search_only", "letter_required"}:
+        if error_type in {
+            "search_only", "letter_required", "questionnaire_validation",
+            "manual_recoverable",
+        }:
             status = "released"
         else:
             status = "failed_transient" if info.get("transient") else "failed_permanent"

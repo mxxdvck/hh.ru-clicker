@@ -57,6 +57,10 @@ def _mobile_search_filters(filters: dict) -> dict:
     locally sorted result can still miss the globally newest vacancies.
     """
     result = dict(filters or {})
+    if CONFIG.filter_low_competition:
+        result["label"] = "low_performance"
+    elif CONFIG.filter_agencies:
+        result["label"] = "not_from_agency"
     if CONFIG.fresh_vacancies_mode:
         result.setdefault("order_by", "publication_time")
     try:
@@ -215,7 +219,9 @@ from app.llm import (generate_llm_reply, generate_llm_cover_letter, _openclaw_co
 
 from app.hh_client_factory import get_client
 from app.apply_safety import reserve_apply, finalize_apply
-from app.application_ledger import mark_interrupted_startup, mark_application, list_interrupted
+from app.application_ledger import (
+    mark_interrupted_startup, mark_run_interrupted, mark_application, list_interrupted,
+)
 
 from app.hh_chat import (
     _build_thread_from_chat_item, _check_chat_locked,
@@ -229,6 +235,41 @@ from app.hh_resume import (
 from app.state import AccountState
 
 LLM_LOG_FILE = Path("data") / "llm_log.jsonl"
+
+
+def _is_transient_apply_error(info: dict | None) -> bool:
+    """Classify retryable transport/server failures without hiding explicit permanent errors."""
+    info = info or {}
+    if info.get("transient") or info.get("exception"):
+        return True
+    try:
+        if int(info.get("http_status") or 0) >= 500:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if str(info.get("error_code") or "").lower() == "unknown":
+        return True
+    return "unknown" in str(info.get("raw") or "").lower()[:40]
+
+
+def _questionnaire_failure_attempt(state, vid: str, info: dict | None) -> tuple[int, dict]:
+    """Allow the intended second questionnaire attempt, then fail closed."""
+    failures = state._test_failures.get(vid, 0) + 1
+    state._test_failures[vid] = failures
+    final_info = dict(info or {})
+    final_info["transient"] = failures < 2
+    return failures, final_info
+
+def _search_filter_query_suffix() -> str:
+    """Build HH search filters; HH accepts one special ``label`` value."""
+    params = []
+    if CONFIG.filter_low_competition:
+        params.append("&label=low_performance")
+    elif CONFIG.filter_agencies:
+        params.append("&label=not_from_agency")
+    if CONFIG.search_period_days > 0:
+        params.append(f"&search_period={CONFIG.search_period_days}")
+    return "".join(params)
 
 # -- Async page fetcher (used only by BotManager) --
 
@@ -1323,8 +1364,8 @@ class BotManager:
                 "llm_generate_cover_letter": CONFIG.llm_generate_cover_letter,
                 "llm_use_resume": CONFIG.llm_use_resume,
                 "llm_use_quick_replies": getattr(CONFIG, "llm_use_quick_replies", True),
-                "hh_ai_letter_first_try": getattr(CONFIG, "hh_ai_letter_first_try", True),
-                "related_vacancies_enabled": getattr(CONFIG, "related_vacancies_enabled", True),
+                "hh_ai_letter_first_try": getattr(CONFIG, "hh_ai_letter_first_try", False),
+                "related_vacancies_enabled": getattr(CONFIG, "related_vacancies_enabled", False),
                 "llm_model": CONFIG.llm_model,
                 "llm_base_url": CONFIG.llm_base_url,
                 "llm_status_summary": get_llm_status_summary(),
@@ -1502,6 +1543,20 @@ class BotManager:
                 break  # normal exit
             except Exception as e:
                 log_exception(f"WORKER CRASHED [{state.short}]", e)
+                try:
+                    interrupted = mark_run_interrupted(
+                        state.name, getattr(state, "apply_run_id", ""),
+                        detail=f"worker crashed: {str(e)[:200]}",
+                    )
+                    if interrupted:
+                        state._apply_reconciled_run_id = ""
+                        self._add_log(
+                            state.short, state.color,
+                            f"Crash-recovery: {interrupted} unresolved application(s) will be checked against HH",
+                            "warning",
+                        )
+                except Exception as ledger_exc:
+                    log_exception(f"apply ledger crash recovery failed [{state.short}]", ledger_exc)
                 state.status = "error"
                 state.status_detail = f"Перезапуск через 30с ({str(e)[:30]})"
                 self._add_log(state.short, state.color, f"⚠️ Worker упал: {str(e)[:50]}. Перезапуск через 30с", "error")
@@ -2481,12 +2536,15 @@ class BotManager:
                                 self._add_acc_event(state, "⚠️", "error", "Авторизация", "", "Обновите куки")
                                 continue
                             else:
+                                # The old code immediately wrote failed_permanent here, so the
+                                # advertised second questionnaire attempt could never happen:
+                                # the central ledger blocked the vacancy on the next cycle.
+                                failures, q_final_info = _questionnaire_failure_attempt(
+                                    state, vid, q_info,
+                                )
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
-                                               "error", q_info or {}, state=None)
-                                # Не удалось — считаем неудачи
-                                state._test_failures[vid] = state._test_failures.get(vid, 0) + 1
-                                if state._test_failures[vid] >= 2:
-                                    # Permanently mark as failed test after 2 attempts
+                                               "error", q_final_info, state=None)
+                                if failures >= 2:
                                     add_test_vacancy(vid, title, company,
                                                      acc["name"], acc.get("resume_hash", ""))
                                 state.tests += 1
@@ -2583,8 +2641,7 @@ class BotManager:
                         # не наша проблема (сеть/куки OK). Не растим consecutive_errors чтобы
                         # auto_pause не срабатывал зря — тогда все успешные отклики в этом
                         # батче не бракуются `if state.paused: break` циклом ниже.
-                        transient = 'error_code' in (info or {}) and (info or {}).get('error_code') == 'unknown'
-                        transient = transient or 'unknown' in raw.lower()[:40]
+                        transient = _is_transient_apply_error(info)
                         final_info = {**(info or {}), "transient": transient}
                         finalize_apply(acc.get("name", state.name), vid, resume_id,
                                        "error", final_info, state=None)
@@ -2833,13 +2890,8 @@ class BotManager:
         effective_urls = acc.get("urls") or [_url_entry(u)["url"] for u in CONFIG.url_pool]
         # Build extra search filter params from config
         # Note: HH only accepts ONE label param; low_competition takes priority
-        extra_params = ""
-        if CONFIG.filter_low_competition:
-            extra_params += "&label=low_performance"
-        elif CONFIG.filter_agencies:
-            extra_params += "&label=not_from_agency"
-        if CONFIG.search_period_days > 0:
-            extra_params += f"&search_period={CONFIG.search_period_days}"
+        extra_params = _search_filter_query_suffix()
+
         for url_idx, url in enumerate(effective_urls):
             pages = acc_url_pages.get(url) or url_pages.get(url, CONFIG.pages_per_url)
             sep = "&" if "?" in url else "?"

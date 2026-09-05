@@ -14,6 +14,16 @@ def test_mobile_fresh_mode_requests_server_publication_order(monkeypatch):
     }
 
 
+def test_mobile_search_applies_special_label_filters(monkeypatch):
+    monkeypatch.setattr("app.manager.CONFIG.fresh_vacancies_mode", False)
+    monkeypatch.setattr("app.manager.CONFIG.search_period_days", 0)
+    monkeypatch.setattr("app.manager.CONFIG.filter_low_competition", False)
+    monkeypatch.setattr("app.manager.CONFIG.filter_agencies", True)
+    assert _mobile_search_filters({})["label"] == "not_from_agency"
+
+    monkeypatch.setattr("app.manager.CONFIG.filter_low_competition", True)
+    assert _mobile_search_filters({})["label"] == "low_performance"
+
 def test_mobile_search_keeps_explicit_order_and_omits_unsupported_period(monkeypatch):
     monkeypatch.setattr("app.manager.CONFIG.fresh_vacancies_mode", True)
     monkeypatch.setattr("app.manager.CONFIG.search_period_days", 14)

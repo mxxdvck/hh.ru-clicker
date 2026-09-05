@@ -4412,7 +4412,16 @@ function updateCard(card, acc) {
     if (cfg[key] !== undefined) cb.checked = cfg[key];
     if (!cb._bound) {
       cb._bound = true;
-      cb.onchange = () => sendCmd({type: 'set_config', key, value: cb.checked});
+      cb.onchange = () => {
+        if (cb.checked && (key === 'filter_low_competition' || key === 'filter_agencies')) {
+          const otherKey = key === 'filter_low_competition' ? 'filter_agencies' : 'filter_low_competition';
+          document.querySelectorAll(`.smart-filter-cb[data-key="${otherKey}"]`).forEach(other => {
+            other.checked = false;
+          });
+          sendCmd({type: 'set_config', key: otherKey, value: false});
+        }
+        sendCmd({type: 'set_config', key, value: cb.checked});
+      };
     }
   });
   card.querySelectorAll('.smart-filter-sel').forEach(sel => {
@@ -6551,11 +6560,18 @@ async function degradedFallbackToggle(idx, cb) {
 const JSON_CONFIG_TEMPLATE = {
   "pages_per_url": 3,
   "max_concurrent": 5,
-  "response_delay": 2,
-  "pause_between_cycles": 5,
+  "response_delay": 10,
+  "pause_between_cycles": 60,
   "limit_check_interval": 30,
   "resume_touch_interval": 4,
-  "batch_responses": 5,
+  "batch_responses": 1,
+  "daily_apply_limit": 20,
+  "run_apply_limit": 20,
+  "search_only_mode": true,
+  "related_vacancies_enabled": false,
+  "hh_ai_letter_first_try": false,
+  "llm_enabled": false,
+  "llm_auto_send": false,
   "min_salary": 0,
   "questionnaire_default_answer": "Готова рассказать подробнее на собеседовании.",
   "questionnaire_templates": [
@@ -6729,7 +6745,7 @@ async function backupRestore(input) {
   const st = document.getElementById('backup-st');
   const f = input.files && input.files[0];
   if (!f) return;
-  if (!confirm(`Восстановить из ${f.name}? Текущие data/*.json будут перезаписаны.`)) {
+  if (!confirm(`Восстановить из ${f.name}? Текущие config/accounts/sessions/OAuth данные будут перезаписаны.`)) {
     input.value = ''; return;
   }
   if (st) { st.textContent = '⏳ Восстанавливаю...'; st.style.color = 'var(--dim)'; }

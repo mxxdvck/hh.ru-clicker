@@ -1107,7 +1107,7 @@
       </div>
       <!-- Backup / Restore: один файл со всем (config + accounts + sessions + oauth) -->
       <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn-sm" style="color:var(--cyan);border-color:var(--cyan)" onclick="backupDownload(this)">📥 Скачать бэкап (всё)</button>
+        <button class="btn-sm" style="color:var(--cyan);border-color:var(--cyan)" onclick="backupDownload(this)">📥 Скачать защищённый бэкап</button>
         <label class="btn-sm" style="color:var(--yellow);border-color:var(--yellow);cursor:pointer;display:inline-flex;align-items:center;padding:5px 10px">
           📤 Восстановить
           <input type="file" id="backup-file" accept="application/json,.json" style="display:none" onchange="backupRestore(this)">
@@ -1115,7 +1115,7 @@
         <span id="backup-st" style="font-size:11px;color:var(--dim)"></span>
       </div>
       <div style="font-size:10px;color:var(--dim);margin-bottom:14px;line-height:1.6">
-        🔐 Полный бэкап шифруется. Читаемый снимок ниже всегда скрывает cookies, токены и API-ключи.
+        🔐 Бэкап настроек, аккаунтов, сессий и OAuth шифруется. Читаемый снимок ниже всегда скрывает cookies, токены и API-ключи.
       </div>
 
       <details class="session-block" id="json-all-details" open>
@@ -1126,7 +1126,7 @@
           <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
             <button class="btn-sm" onclick="jsonAllLoad(this)">↻ Обновить</button>
             <button class="btn-sm" style="color:var(--red);border-color:var(--red)"
-              onclick="jsonAllWipe(this)">🗑 Очистить всё</button>
+              onclick="jsonAllWipe(this)">🗑 Очистить секреты и настройки</button>
             <span id="json-all-st" style="font-size:11px;color:var(--dim)"></span>
           </div>
         </div>

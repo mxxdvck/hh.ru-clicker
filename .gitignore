@@ -67,3 +67,6 @@ jadx*/
 .tmp_*.py
 *.bak
 *.pre_*.bak
+
+# Playwright failure screenshots are local CI/debug artifacts.
+tests/e2e/failures/

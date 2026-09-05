@@ -12,6 +12,7 @@
   "llm_auto_send": false,
   "llm_generate_cover_letter": false,
   "llm_fill_questionnaire": false,
+  "hh_ai_letter_first_try": false,
   "min_salary": 0,
   "search_period_days": 14,
   "fresh_vacancies_mode": false,
