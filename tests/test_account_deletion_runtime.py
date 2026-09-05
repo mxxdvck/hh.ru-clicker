@@ -54,7 +54,9 @@ def test_frontend_reindexes_and_resyncs_account_controls():
     assert "delete _AccDiagCache[idx]" in source
 
     job_status = open("static/js/features/job_status.js", encoding="utf-8").read()
-    assert "window.JobStatusSyncAccounts = jsFillAccounts" in job_status
+    assert "window.JobStatusSyncAccounts = jsSyncAccounts" in job_status
+    assert "const loaded = jsFillAccounts()" in job_status
+    assert "jsLoadDiagnostics()" in job_status
     hedi = open("static/js/features/hedi.js", encoding="utf-8").read()
     assert "HediState.idx = null" in hedi
 

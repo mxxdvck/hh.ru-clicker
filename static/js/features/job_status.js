@@ -195,7 +195,28 @@
     }
   }
 
-  window.JobStatusSyncAccounts = jsFillAccounts;
+  function jsSyncAccounts() {
+    const select = jsEl('job-status-account');
+    const previous = select?.value ?? '';
+    const loaded = jsFillAccounts();
+    if (!loaded) {
+      JobStatusState.accountsLoaded = false;
+      jsStartPolling();
+      return false;
+    }
+
+    const current = select?.value ?? '';
+    const firstLoad = !JobStatusState.accountsLoaded;
+    JobStatusState.accountsLoaded = true;
+    if (JobStatusState.pollTimer) {
+      clearInterval(JobStatusState.pollTimer);
+      JobStatusState.pollTimer = null;
+    }
+    if (firstLoad || current !== previous) jsLoadDiagnostics();
+    return true;
+  }
+
+  window.JobStatusSyncAccounts = jsSyncAccounts;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', jsInit, {once: true});
