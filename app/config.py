@@ -37,6 +37,7 @@ import threading
 from pathlib import Path
 
 from app.logging_utils import log_debug
+from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
 # Используем storage executor вместо своего fire-and-forget thread per save.
 try:
     from app.storage import _schedule_save
@@ -385,24 +386,15 @@ def save_config():
             # Mobile OTP settings live in the same config.json under a namespaced
             # object. Preserve them when the legacy bot Config is saved.
             try:
-                existing = json.loads(target_file.read_text(encoding="utf-8")) if target_file.exists() else {}
+                existing = secure_read_json(target_file, {}) if target_file.exists() else {}
                 if isinstance(existing, dict) and isinstance(existing.get("mobile_auth"), dict):
                     data["mobile_auth"] = existing["mobile_auth"]
             except (OSError, json.JSONDecodeError):
                 pass
-            tmp = target_file.with_suffix(".tmp")
             try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-                tmp.replace(target_file)
-                try:
-                    import os as _os
-                    _os.chmod(target_file, 0o600)  # PII (phone, telegram в letter_templates)
-                except Exception:
-                    pass
+                secure_write_json(target_file, data, encrypt=True)
             except Exception as e:
                 log_debug(f"save_config error: {e}")
-                tmp.unlink(missing_ok=True)
     (_schedule_save(_write) if _schedule_save else threading.Thread(target=_write, daemon=True).start())
 
 
@@ -412,8 +404,9 @@ def load_config():
     if not CONFIG_FILE.exists():
         return
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = secure_read_json(CONFIG_FILE, {}, migrate=True)
+        if not isinstance(data, dict):
+            raise ValueError("config root must be an object")
         for k in _CONFIG_KEYS:
             if k in data:
                 try:
@@ -501,19 +494,10 @@ def save_accounts():
     target_file = ACCOUNTS_FILE
     def _write():
         with _accounts_write_lock:
-            tmp = target_file.with_suffix(".tmp")
             try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(snapshot, f, ensure_ascii=False, indent=2, default=str)
-                tmp.replace(target_file)
-                try:
-                    import os as _os
-                    _os.chmod(target_file, 0o600)  # cookies — owner-only
-                except Exception:
-                    pass
+                secure_write_json(target_file, snapshot, encrypt=True)
             except Exception as e:
                 log_debug(f"save_accounts error: {e}")
-                tmp.unlink(missing_ok=True)
     (_schedule_save(_write) if _schedule_save else threading.Thread(target=_write, daemon=True).start())
 
 
@@ -523,8 +507,7 @@ def load_accounts():
         save_accounts()  # первый запуск — сохраняем текущие дефолты
         return
     try:
-        with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = secure_read_json(ACCOUNTS_FILE, [], migrate=True)
         if isinstance(data, list):
             # Аудит 2026-08-17 #20: раньше `and data` игнорировало валидный
             # пустой список [] → удалённые из UI аккаунты «воскресали» из

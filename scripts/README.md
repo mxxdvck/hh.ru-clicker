@@ -34,6 +34,8 @@
 
 ---
 
+> Secure storage: scripts that read `config.json`, `accounts.json`, `browser_sessions.json` or `oauth_tokens.json` use `app.secure_store`. They work with DPAPI/AES-GCM files and do not require decrypting files by hand.
+
 ### 1. migrate_accounts_add_mode.py
 
 Добавляет отсутствующее поле `"mode"` (default `"auto"`) в каждую запись

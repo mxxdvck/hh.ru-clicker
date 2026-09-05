@@ -1121,45 +1121,34 @@ async function llmQuickSetup(inp) {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({profiles: merged, mode: 'fallback'})
     });
-    if (!r1.ok) throw new Error('llm_profiles HTTP ' + r1.status);
+    const r1Data = await r1.json().catch(() => ({}));
+    if (!r1.ok || r1Data.ok === false) {
+      throw new Error(r1Data.error || ('llm_profiles HTTP ' + r1.status));
+    }
 
-    // 3) Также пишем в плоский llm_config (legacy путь) и включаем авто-отправку
-    await fetch('/api/llm_config', {
+    const r2 = await fetch('/api/llm_config', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         api_key: key, base_url: prov.base_url, model: prov.model,
-        enabled: true, auto_send: true,
+        enabled: true, auto_send: false,
       })
     });
+    const r2Data = await r2.json().catch(() => ({}));
+    if (!r2.ok || r2Data.ok === false) {
+      throw new Error(r2Data.error || ('llm_config HTTP ' + r2.status));
+    }
 
-    // 4) Глобальный тумблер LLM — llm_config выше уже выставил enabled=true,
-    //    но дублируем через WS на случай гонки и обновляем кнопку в UI.
     try {
       if (typeof sendCmd === 'function') {
         sendCmd({type:'set_config', key:'llm_enabled', value:true});
-        sendCmd({type:'set_config', key:'llm_auto_send', value:true});
       }
       _llmUpdateToggleBtn(true);
     } catch(e) {}
 
-    // 5) Проверяем, что ключ реально лёг на диск
-    let saved = false;
-    try {
-      const v = await fetch('/api/raw/config');
-      if (v.ok) {
-        const cfg = await v.json();
-        const profs = cfg.llm_profiles || [];
-        saved = profs.some(p => (p.api_key || '') === key) || (cfg.llm_api_key || '') === key;
-      }
-    } catch(e) {}
-
-    if (saved) {
-      const fp = key.slice(0,4) + '…' + key.slice(-4);
-      setStatus(`✅ ${prov.name} сохранён · ${fp} (${key.length} симв.) · модель: ${prov.model} · LLM включён`, 'var(--green)');
-      if (inp) inp.value = '';
-    } else {
-      setStatus('⚠️ Сохранение прошло, но при проверке ключ не виден. Проверь права на data/config.json', 'var(--yellow)');
-    }
+    // Credential values are intentionally write-only in the dashboard.
+    const fp = key.slice(0,4) + '…' + key.slice(-4);
+    setStatus(`✅ ${prov.name} сохранён · ${fp} (${key.length} симв.) · модель: ${prov.model} · LLM включён`, 'var(--green)');
+    if (inp) inp.value = '';
   } catch(e) {
     setStatus('❌ ' + (e.message || e), 'var(--red)');
   }
@@ -6671,7 +6660,7 @@ async function jsonAllLoad(btn) {
   const st = document.getElementById('json-all-st');
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch('/api/backup');
+    const res = await fetch('/api/backup?redacted=1');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (ta) {
@@ -6707,73 +6696,6 @@ async function jsonAllWipe(btn) {
   if (btn) btn.disabled = false;
 }
 
-async function jsonAllSave(btn) {
-  const ta = document.getElementById('json-all-ta');
-  const st = document.getElementById('json-all-st');
-  let parsed;
-  try { parsed = JSON.parse(ta.value); }
-  catch(e) { if (st) { st.textContent = '❌ Невалидный JSON: ' + e.message; st.style.color = 'var(--red)'; } return; }
-  // Diff vs текущий бэкенд-стейт — если что-то теряется (пустые list/string на месте непустых),
-  // показываем предупреждение перед сохранением.
-  let current = null;
-  try { const r = await fetch('/api/backup'); current = await r.json(); } catch(e) {}
-  const TRACK = {
-    'config.json': ['llm_profiles', 'letter_templates', 'questionnaire_templates', 'url_pool', 'allowed_schedules', 'llm_api_key', 'llm_system_prompt'],
-    'accounts.json': null,  // целиком
-    'browser_sessions.json': null,
-  };
-  const lost = [];
-  if (current) {
-    for (const [fname, fields] of Object.entries(TRACK)) {
-      const oldF = current[fname];
-      const newF = parsed[fname];
-      if (fields) {
-        for (const f of fields) {
-          const ov = (oldF || {})[f];
-          const nv = (newF || {})[f];
-          const oNonEmpty = Array.isArray(ov) ? ov.length > 0 : (typeof ov === 'string' ? ov.length > 0 : !!ov);
-          const nEmpty = Array.isArray(nv) ? nv.length === 0 : (typeof nv === 'string' ? nv.length === 0 : !nv);
-          if (oNonEmpty && nEmpty) {
-            const oldCount = Array.isArray(ov) ? ov.length : '~';
-            lost.push(`${fname}/${f} (${oldCount} → 0)`);
-          }
-        }
-      } else {
-        const oldArr = Array.isArray(oldF) ? oldF : [];
-        const newArr = Array.isArray(newF) ? newF : [];
-        if (oldArr.length > 0 && newArr.length === 0) lost.push(`${fname} (${oldArr.length} → 0)`);
-      }
-    }
-  }
-  let confirmMsg = 'Сохранить и перезаписать ВСЕ data/*.json? Текущие данные потеряются.';
-  if (lost.length) {
-    confirmMsg = '⚠️ Потеряются непустые поля:\n• ' + lost.join('\n• ') +
-                 '\n\nПродолжить (затрёт всё)? Жми Cancel чтобы не сохранять.';
-  }
-  if (!confirm(confirmMsg)) return;
-  if (btn) btn.disabled = true;
-  if (st) { st.textContent = '⏳ Сохраняю...'; st.style.color = 'var(--dim)'; }
-  try {
-    const res = await fetch('/api/backup', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(parsed)
-    });
-    const data = await res.json();
-    if (data.ok) {
-      if (st) { st.textContent = `✅ Сохранено: ${(data.restored||[]).join(', ')}. ${data.warning||''}`; st.style.color = 'var(--green)'; }
-      // Перечитаем из бэка чтобы textarea показывала актуальное состояние.
-      jsonAllLoad(null);
-      // Форс-реконнект WS → свежий snapshot → UI перерисовывается без F5.
-      try { if (State.ws) State.ws.close(); } catch(e) {}
-    } else {
-      if (st) { st.textContent = '❌ ' + (data.error || JSON.stringify(data.errors||{})); st.style.color = 'var(--red)'; }
-    }
-  } catch(e) {
-    if (st) { st.textContent = '❌ ' + e; st.style.color = 'var(--red)'; }
-  }
-  if (btn) btn.disabled = false;
-}
-
 async function backupDownload(btn) {
   const st = document.getElementById('backup-st');
   if (btn) btn.disabled = true;
@@ -6785,10 +6707,18 @@ async function backupDownload(btn) {
     const stamp = new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `hh-backup-${stamp}.json`;
+    const cd = res.headers.get('Content-Disposition') || '';
+    const nameMatch = cd.match(/filename="?([^";]+)"?/i);
+    a.download = nameMatch ? nameMatch[1] : `hh-backup-${stamp}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    if (st) { st.textContent = '✅ Скачано'; st.style.color = 'var(--green)'; }
+    const redacted = res.headers.get('X-HH-Backup-Redacted') === '1';
+    if (st) {
+      st.textContent = redacted
+        ? '⚠️ Скачан redacted-снимок: секреты удалены, восстановление невозможно'
+        : '✅ Зашифрованный бэкап скачан';
+      st.style.color = redacted ? 'var(--yellow)' : 'var(--green)';
+    }
   } catch(e) {
     if (st) { st.textContent = '❌ ' + e; st.style.color = 'var(--red)'; }
   }

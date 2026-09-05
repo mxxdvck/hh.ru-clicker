@@ -22,6 +22,8 @@ from urllib.parse import quote, urlencode, urljoin, urlparse
 
 import requests
 
+from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
+
 
 DATA_DIR = Path("data")
 CONFIG_FILE = DATA_DIR / "config.json"
@@ -112,21 +114,14 @@ class MobileConfig:
 
 def _read_object(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = secure_read_json(path, {}, migrate=True)
         return value if isinstance(value, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except Exception:
         return {}
 
 
 def _atomic_write(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    try:
-        tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    secure_write_json(path, value, encrypt=True)
 
 
 # Allowlist хостов мобильного API: точный хост либо суффикс с точкой на границе.

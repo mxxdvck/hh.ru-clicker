@@ -14,6 +14,11 @@ from pydantic import BaseModel
 from app.config import CONFIG, accounts_data, _CONFIG_KEYS, save_config, save_accounts
 from app.storage import load_browser_sessions, save_browser_sessions, DATA_DIR
 from app.logging_utils import log_debug
+from app.secure_store import (
+    SecureStoreError, backend_name, decode_envelope, encode_envelope,
+    is_secure_envelope, read_json as secure_read_json,
+    write_json_atomic as secure_write_json,
+)
 
 
 router = APIRouter()
@@ -110,14 +115,60 @@ def _all_raw_config_keys():
     return set(_CONFIG_KEYS) | _RAW_LIST_KEYS | _RAW_LLM_KEYS | _RAW_EXTRA_KEYS
 
 
+_SECRET_MASK = "***"
+
+def _masked_llm_profiles(profiles):
+    safe = []
+    for profile in profiles or []:
+        if not isinstance(profile, dict):
+            continue
+        item = dict(profile)
+        key = str(item.get("api_key") or "")
+        item["api_key"] = _SECRET_MASK if key else ""
+        item["key_set"] = bool(key)
+        safe.append(item)
+    return safe
+
+def _merge_llm_profile_secrets(incoming, current):
+    current = [p for p in (current or []) if isinstance(p, dict)]
+    def ident(p):
+        return (str(p.get("name") or "").strip(), str(p.get("base_url") or "").strip(),
+                str(p.get("model") or "").strip())
+    by_ident = {ident(p): p for p in current}
+    by_name = {str(p.get("name") or "").strip(): p for p in current if p.get("api_key")}
+    merged = []
+    for pos, raw in enumerate(incoming):
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        item.pop("key_set", None)
+        key = str(item.get("api_key") or "")
+        if key in ("", _SECRET_MASK):
+            old = by_ident.get(ident(item)) or by_name.get(str(item.get("name") or "").strip())
+            if not old and pos < len(current):
+                old = current[pos]
+            item["api_key"] = str((old or {}).get("api_key") or "")
+        merged.append(item)
+    return merged
+
+
+
 @router.get("/api/raw/config")
 async def api_raw_config_get():
-    """Вернуть текущий config как объект — с llm_api_key и всеми LLM-ключами,
-    чтобы юзер видел актуальные значения и мог бэкапить вручную."""
+    """Return raw-editor config without exposing credential values."""
     out = {}
-    for k in sorted(_all_raw_config_keys()):
-        if hasattr(CONFIG, k):
-            out[k] = getattr(CONFIG, k)
+    for key in sorted(_all_raw_config_keys()):
+        if not hasattr(CONFIG, key):
+            continue
+        value = getattr(CONFIG, key)
+        if key == "llm_api_key":
+            out[key] = _SECRET_MASK if str(value or "").strip() else ""
+        elif key == "llm_profiles":
+            out[key] = _masked_llm_profiles(value)
+        elif key == "hh_proxy_url" and isinstance(value, str) and "@" in value:
+            out[key] = _SECRET_MASK
+        else:
+            out[key] = value
     return out
 
 
@@ -149,6 +200,8 @@ async def api_raw_config_set(request: Request, force: int = 0):
             if not force and not value and current:
                 preserved.append(key)
                 continue
+            if key == "llm_profiles":
+                value = _merge_llm_profile_secrets(value, current)
             setattr(CONFIG, key, value)
             continue
         if key in _RAW_LLM_KEYS or key in _RAW_EXTRA_KEYS or key in _CONFIG_KEYS:
@@ -158,6 +211,9 @@ async def api_raw_config_set(request: Request, force: int = 0):
                 errors[key] = str(e)
                 continue
             current = getattr(CONFIG, key, None)
+            if key in {"llm_api_key", "hh_proxy_url"} and casted == _SECRET_MASK and current:
+                preserved.append(key)
+                continue
             # Защита от затирания непустых строк (например llm_api_key, llm_system_prompt)
             if not force and isinstance(casted, str) and not casted and isinstance(current, str) and current:
                 preserved.append(key)
@@ -270,29 +326,68 @@ def _load_json_file(name: str):
     if not p.exists():
         return None
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return secure_read_json(p, None, migrate=True)
     except Exception as e:
         log_debug(f"backup: failed to load {name}: {e}")
         return None
 
 
+_REDACT_KEYS = {
+    "api_key", "llm_api_key", "access_token", "refresh_token", "client_secret",
+    "oauth_client_secret", "app_client_token", "password", "cookie", "cookies",
+    "authorization", "hhtoken", "hhtokenxs", "_xsrf",
+}
+
+def _redact_backup_value(value, key: str = ""):
+    key_l = str(key).lower()
+    if key_l in _REDACT_KEYS or key_l.endswith("_token") or key_l.endswith("_secret"):
+        if isinstance(value, dict):
+            return {k: "***" for k in value}
+        return "***" if value not in (None, "") else value
+    if isinstance(value, dict):
+        return {k: _redact_backup_value(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_backup_value(v, key) for v in value]
+    if isinstance(value, str) and "@" in value and "://" in value:
+        # Proxy URLs may carry user:password@host. Do not export credentials.
+        import re as _re
+        return _re.sub(r"(://)[^/@:]+:[^/@]+@", r"\1***:***@", value)
+    return value
+
+
+def _redacted_backup(bundle: dict) -> dict:
+    out = _redact_backup_value(bundle)
+    out["redacted"] = True
+    return out
+
+
 @router.get("/api/backup")
-async def api_backup_download():
-    """Скачать полный бэкап data/ (config + accounts + browser_sessions + oauth_tokens)
-    одним JSON-файлом. Содержит cookies/llm_api_key — храни в безопасном месте."""
+async def api_backup_download(redacted: int = 0):
+    """Download a backup without exposing secrets as plaintext."""
     bundle = {
-        "version": 1,
+        "version": 2,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
     }
     for fname in _BACKUP_FILES:
         bundle[fname] = _load_json_file(fname)
-    body = json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
+
+    provider = backend_name()
+    force_redacted = bool(redacted) or provider == "plaintext"
+    headers = {"Cache-Control": "no-store"}
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    headers = {
-        "Content-Disposition": f'attachment; filename="hh-backup-{stamp}.json"',
-        "Cache-Control": "no-store",
-    }
+    if force_redacted:
+        export = _redacted_backup(bundle)
+        filename = f"hh-backup-redacted-{stamp}.json"
+        headers["X-HH-Backup-Redacted"] = "1"
+        if provider == "plaintext" and not redacted:
+            headers["X-HH-Backup-Warning"] = "encryption-backend-unavailable"
+    else:
+        export = encode_envelope(bundle, provider)
+        export["backup_format"] = "hh-clicker-encrypted-backup-v2"
+        filename = f"hh-backup-encrypted-{stamp}.json"
+        headers["X-HH-Backup-Encrypted"] = provider
+    headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    body = json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8")
     return Response(content=body, media_type="application/json", headers=headers)
 
 
@@ -335,7 +430,18 @@ async def api_backup_restore(request: Request, force: int = 0):
     except Exception:
         return {"ok": False, "error": "Невалидный JSON"}
     if not isinstance(data, dict):
-        return {"ok": False, "error": "Ожидается объект"}
+        return {"ok": False, "error": "Backup payload must be a JSON object"}
+    if is_secure_envelope(data):
+        try:
+            data = decode_envelope(data)
+        except SecureStoreError as exc:
+            return {"ok": False, "error": f"Cannot decrypt backup: {exc}"}
+        if not isinstance(data, dict):
+            return {"ok": False, "error": "Decrypted backup has an invalid format"}
+    if data.get("redacted") is True:
+        return {"ok": False, "error": "Redacted backup cannot restore secrets"}
+    if not any(name in data for name in _BACKUP_FILES):
+        return {"ok": False, "error": "Backup contains no supported data files"}
     restored = []
     errors = {}
     preserved_all = []
@@ -360,9 +466,8 @@ async def api_backup_restore(request: Request, force: int = 0):
             # unlink/replace могла удалить чужой tmp или откатить только что
             # сохранённые изменения. Используем _atomic_write_json (fsync +
             # tmp.replace) для durability и не пересекаемся с writers по имени.
-            from app.storage import _atomic_write_json as _atomic_write
             p = Path(DATA_DIR) / fname
-            _atomic_write(p, payload)
+            secure_write_json(p, payload, encrypt=True)
             restored.append(fname)
         except Exception as e:
             errors[fname] = str(e)
@@ -373,6 +478,8 @@ async def api_backup_restore(request: Request, force: int = 0):
         _load_config()
         _load_accounts()
         _bot.temp_sessions[:] = load_browser_sessions()
+        from app import oauth as _oauth
+        _oauth._load_oauth_tokens()
     except Exception as e:
         log_debug(f"backup restore: live-reload error: {e}")
 

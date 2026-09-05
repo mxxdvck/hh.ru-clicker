@@ -60,6 +60,7 @@ def _atomic_write_json(path: Path, data) -> None:
             pass
 
 from app.logging_utils import log_debug
+from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
 from app.config import hh_base
 
 DATA_DIR = Path("data")
@@ -444,8 +445,7 @@ def load_browser_sessions() -> list:
     """Загрузить браузерные сессии из файла."""
     if SESSIONS_FILE.exists():
         try:
-            with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
-                sessions = json.load(f)
+            sessions = secure_read_json(SESSIONS_FILE, [], migrate=True)
             if not isinstance(sessions, list):
                 return []
             from app.session_migration import backup_file, deduplicate_sessions, write_json_atomic
@@ -510,7 +510,7 @@ def save_browser_sessions(sessions: list, *, wait: bool = False):
                     # параллельный save с меньшим seq не мог его откатить.
                     pending_seq = seq
                 try:
-                    _atomic_write_json(target_file, pending)
+                    secure_write_json(target_file, pending, encrypt=True)
                     _restrict_perms(target_file)
                     with _sessions_pending_lock:
                         if pending_seq > _sessions_written_seq:

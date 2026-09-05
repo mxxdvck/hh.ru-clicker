@@ -8,9 +8,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from app.session_migration import backup_file, deduplicate_sessions, write_json_atomic
+from app.secure_store import read_json as secure_read_json
 
 def migrate(path: Path, *, apply: bool = False) -> dict:
-    sessions = json.loads(path.read_text(encoding="utf-8"))
+    sessions = secure_read_json(path, [], migrate=False)
     if not isinstance(sessions, list):
         raise ValueError("browser_sessions.json must contain a JSON list")
     merged, removed = deduplicate_sessions(sessions)
@@ -28,7 +29,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         result = migrate(args.file, apply=args.apply)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr); return 1
     mode = "applied" if result["applied"] else "dry-run"
     print(f"{mode}: {result['before']} -> {result['after']} sessions; removed={result['removed']}")

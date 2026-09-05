@@ -78,7 +78,8 @@ WebSocket HH доставляет chat events, внутренний WS dashboard
 ## Данные и конкурентность
 
 `data/accounts.json`, `browser_sessions.json`, `oauth_tokens.json` и
-`config.json` записываются локально и атомарно. OAuth refresh защищён per-user
-lock. Исходящие web-запросы используют отдельный cookie jar на identity
+`config.json` записываются локально, атомарно и через secure-store: DPAPI на
+Windows либо AES-GCM при заданном `HH_BOT_DATA_KEY`. Plaintext legacy-файлы
+мигрируют прозрачно. OAuth refresh защищён per-user lock. Исходящие web-запросы используют отдельный cookie jar на identity
 аккаунта; LRU ограничивает число session jars. Полная модель угроз и удаление
 данных описаны в [SECURITY.md](SECURITY.md).

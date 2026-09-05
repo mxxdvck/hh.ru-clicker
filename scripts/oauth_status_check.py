@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.config import CONFIG, load_config  # noqa: E402
 from app import oauth as app_oauth  # noqa: E402
+from app.secure_store import read_json as secure_read_json  # noqa: E402
 
 ACCOUNTS_FILE = Path("data") / "accounts.json"
 
@@ -67,9 +68,8 @@ def load_accounts() -> list:
     if not ACCOUNTS_FILE.exists():
         return None
     try:
-        with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as e:
+        data = secure_read_json(ACCOUNTS_FILE, None, migrate=False)
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"Ошибка чтения {ACCOUNTS_FILE}: {e}")
         sys.exit(1)
     if not isinstance(data, list):

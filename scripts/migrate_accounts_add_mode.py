@@ -19,7 +19,6 @@ import argparse
 import json
 import logging
 import os
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +33,8 @@ DATA_DIR = Path("data")
 BACKUP_ROOT = DATA_DIR / "backup"
 TARGET_FILES = ("accounts.json", "browser_sessions.json")
 VALID_MODES = ("web", "mobile", "auto")
+
+from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json  # noqa: E402
 
 log = logging.getLogger("migrate_accounts_add_mode")
 
@@ -51,11 +52,10 @@ def _load_list(path: Path):
     """Прочитать JSON-список. Возвращает (данные, ошибка); ошибка == "missing",
     если файла нет."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = secure_read_json(path, None, migrate=False)
     except FileNotFoundError:
         return None, "missing"
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, OSError, ValueError, RuntimeError) as e:
         return None, str(e)
     if not isinstance(data, list):
         return None, f"ожидался список объектов, а не {type(data).__name__}"
@@ -63,37 +63,15 @@ def _load_list(path: Path):
 
 
 def _atomic_write_json(path: Path, data) -> None:
-    """Атомарная запись JSON (tmp + replace) с chmod 0o600 — в файлах PII."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.chmod(tmp, 0o600)  # chmod до replace: цель никогда не бывает 0o644
-        tmp.replace(path)
-    except Exception:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise
-
+    """Atomic write while preserving secure-store encryption at rest."""
+    secure_write_json(path, data, encrypt=True)
 
 def _atomic_copy(src: Path, dst: Path) -> None:
-    """Атомарно скопировать файл байт-в-байт (для rollback) + chmod 0o600."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_name(dst.name + ".tmp")
-    try:
-        shutil.copy2(src, tmp)  # copy2 сохраняет mtime оригинала
-        os.chmod(tmp, 0o600)
-        tmp.replace(dst)
-    except Exception:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise
-
+    """Restore/copy JSON through secure_store so secrets stay encrypted."""
+    value = secure_read_json(src, None, migrate=False)
+    if value is None:
+        raise ValueError(f"cannot read backup: {src}")
+    secure_write_json(dst, value, encrypt=True)
 
 def _backup_files(paths: list) -> list:
     """Backup оригиналов в data/backup/YYYY-MM-DD/ с сохранением имён файлов.
@@ -115,7 +93,10 @@ def _backup_files(paths: list) -> list:
         dst = backup_dir / src.name
         if dst.exists():
             dst = backup_dir / f"{src.name}_{datetime.now().strftime('%H%M%S')}"
-        shutil.copy2(src, dst)
+        value = secure_read_json(src, None, migrate=False)
+        if value is None:
+            raise ValueError(f"cannot read source for backup: {src}")
+        secure_write_json(dst, value, encrypt=True)
         try:
             dst.chmod(0o600)
         except OSError:

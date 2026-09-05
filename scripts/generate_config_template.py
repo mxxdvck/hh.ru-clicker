@@ -45,6 +45,8 @@ ENV_TEMPLATE_PATH = Path(".env.template")
 CONFIG_TEMPLATE_PATH = Path("data") / "config.template.json"
 USER_CONFIG_FILE = Path("data") / "config.json"
 
+from app.secure_store import read_json as secure_read_json  # noqa: E402
+
 SEP = "=" * 72
 
 
@@ -468,8 +470,7 @@ def inspect_user_config(template_keys: set[str]) -> None:
         return
 
     try:
-        with open(USER_CONFIG_FILE, "r", encoding="utf-8") as f:
-            user_data = json.load(f)
+        user_data = secure_read_json(USER_CONFIG_FILE, {}, migrate=False)
         if not isinstance(user_data, dict):
             log(f"⚠️ {USER_CONFIG_FILE}: ожидался JSON-объект, шаблоны "
                 f"генерируются из дефолтов Config")

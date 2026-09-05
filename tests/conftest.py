@@ -1,10 +1,13 @@
 """Pytest fixtures + sys.path setup."""
+import os
 import sys
 from pathlib import Path
 
 # Чтобы `from app.* import ...` работало при `pytest` запуске из корня проекта.
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+# Never let test collection migrate the developer's real data files.
+os.environ.setdefault("HH_BOT_DISABLE_DATA_ENCRYPTION", "1")
 
 
 import pytest
@@ -20,6 +23,7 @@ def tmp_data_dir(tmp_path, monkeypatch):
     не может дотянуться до реального data/ независимо от того, помнил ли автор
     добавить fixture в аргументы.
     """
+    monkeypatch.setenv("HH_BOT_DISABLE_DATA_ENCRYPTION", "1")
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
     try:

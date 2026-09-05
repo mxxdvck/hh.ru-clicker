@@ -46,6 +46,8 @@ sys.path.insert(0, str(REPO_ROOT))
 OAUTH_FILE = Path("data/oauth_tokens.json")
 DEFAULT_THRESHOLD_HOURS = 24.0
 
+from app.secure_store import read_json as secure_read_json  # noqa: E402
+
 EPILOG = """\
 Примеры:
   python3 scripts/rotate_oauth_tokens.py                        # dry-run: таблица и сводка
@@ -97,9 +99,8 @@ def load_tokens():
     if not OAUTH_FILE.exists():
         return None, "missing", f"Файл {OAUTH_FILE} не найден — сохранённых токенов нет, ротировать нечего."
     try:
-        with open(OAUTH_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as e:
+        data = secure_read_json(OAUTH_FILE, None, migrate=False)
+    except (OSError, ValueError, RuntimeError) as e:
         return None, "error", f"Не удалось прочитать {OAUTH_FILE}: {e}"
     if not isinstance(data, dict):
         return None, "error", f"Неожиданный формат {OAUTH_FILE}: ожидался объект dict, получено {type(data).__name__}"

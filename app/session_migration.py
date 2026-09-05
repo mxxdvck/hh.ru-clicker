@@ -3,9 +3,10 @@ from __future__ import annotations
 import copy
 import json
 import os
-import shutil
 from datetime import datetime
 from pathlib import Path
+
+from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
 
 def _resumes(session: dict) -> list[dict]:
     result, seen = [], set()
@@ -72,16 +73,15 @@ def backup_file(path: Path, *, now: datetime | None = None) -> Path:
     destination = directory / path.name
     if destination.exists():
         destination = directory / f"{path.stem}_{now.strftime('%H%M%S%f')}{path.suffix}"
-    shutil.copy2(path, destination)
-    os.chmod(destination, 0o600)
+    # Re-encode through secure_store so a legacy plaintext source never creates
+    # a new plaintext backup containing cookies.
+    value = secure_read_json(path, None, migrate=False)
+    secure_write_json(destination, value, encrypt=True)
+    try:
+        os.chmod(destination, 0o600)
+    except OSError:
+        pass
     return destination
 
 def write_json_atomic(path: Path, value: list) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    secure_write_json(path, value, encrypt=True)

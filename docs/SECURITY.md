@@ -12,10 +12,12 @@
 | `oauth_tokens.json` | OAuth access/refresh tokens и сроки действия |
 | `config.json` | общие настройки, mobile auth config и LLM credentials |
 
-Файлы находятся локально: в bind-mounted `./data` или Docker volume, который вы
-настроили. Само приложение не синхронизирует их в облако; обращения к hh.ru и
-выбранному LLM-провайдеру, конечно, являются внешней передачей. Не добавляйте
-`data/`, backup или debug logs в git и облачные папки.
+Файлы находятся локально: в bind-mounted `./data` или Docker volume. На Windows
+чувствительные JSON автоматически шифруются через DPAPI текущего пользователя. На
+Linux/macOS задайте `HH_BOT_DATA_KEY` для AES-GCM. Старые plaintext-файлы
+мигрируют при чтении. `HH_BOT_REQUIRE_ENCRYPTION=1` запрещает plaintext fallback.
+Само приложение не синхронизирует эти файлы в облако. Подробнее:
+[SECURE_STORAGE.md](SECURE_STORAGE.md).
 
 ## Секреты и логи
 
@@ -45,9 +47,10 @@ environment:
 попадают в историю и access logs, а изменяющие запросы query-key не принимают.
 Используйте reverse proxy с TLS, firewall и отдельной аутентификацией.
 
-`GET`, `POST` и `DELETE /api/backup` **всегда** требуют API-key, даже если
-глобальный `HH_BOT_API_KEY` пуст. Backup включает cookies и LLM/OAuth secrets —
-храните его зашифрованным и удаляйте после восстановления.
+`GET`, `POST` и `DELETE /api/backup` **всегда** требуют API-key. Полный backup
+шифруется тем же secure-store backend. DPAPI-backup привязан к Windows user/machine;
+для переносимого backup используйте одинаковый `HH_BOT_DATA_KEY` (AES-GCM).
+Без secure backend выдаётся только redacted backup без cookies/keys/tokens.
 
 ## HTTP-защита
 

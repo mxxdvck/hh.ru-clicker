@@ -3,6 +3,7 @@ Logging utilities and login-page detection helper.
 """
 
 import logging
+import re
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -52,10 +53,27 @@ def _get_logger() -> logging.Logger:
         return logging.getLogger("hh_bot_null")
 
 
-def log_debug(message: str):
-    """Записать отладочное сообщение в файл (с ротацией)."""
-    _get_logger().debug(message)
+def redact_sensitive_text(message) -> str:
+    """Best-effort redaction before text reaches persistent logs."""
+    text = str(message)
+    patterns = (
+        (re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;]+)"), True),
+        (re.compile(r"(?i)([\"']?(?:access_token|refresh_token|api_key|llm_api_key|client_secret|oauth_client_secret)[\"']?\s*[:=]\s*[\"']?)([^\s\"',;}]+)"), True),
+        (re.compile(r"(?i)((?:hhtoken|hhtokenxs|_xsrf)\s*=\s*)([^;\s]+)"), True),
+        (re.compile(r"(?i)\b(sk-(?:or-v1-)?[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9_-]{10,}|hf_[A-Za-z0-9_-]{10,}|AIza[A-Za-z0-9_-]{10,})\b"), False),
+    )
+    for pattern, keep_prefix in patterns:
+        if keep_prefix:
+            text = pattern.sub(lambda m: m.group(1) + "[REDACTED]", text)
+        else:
+            text = pattern.sub("[REDACTED]", text)
+    text = re.sub(r"(://)[^/@\s:]+:[^/@\s]+@", r"\1[REDACTED]:[REDACTED]@", text)
+    return text
 
+
+def log_debug(message: str):
+    """Write a debug message after redacting credentials and tokens."""
+    _get_logger().debug(redact_sensitive_text(message))
 
 def log_exception(message: str, exc: Exception | None = None, **fields):
     """Логировать исключение с traceback. Использовать внутри except-блока."""

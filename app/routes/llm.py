@@ -81,8 +81,10 @@ async def api_llm_profiles(request: Request):
         old_by_identity = {_identity(p): p for p in old_profiles}
         old_by_name = {str(p.get("name", "")).strip(): p for p in old_profiles if p.get("api_key")}
         for i, p in enumerate(profiles):
-            if p.get("api_key"):
+            incoming_key = str(p.get("api_key") or "")
+            if incoming_key and incoming_key != "***":
                 continue
+            p["api_key"] = ""
             # (1) strict
             ident = _identity(p)
             if ident in old_by_identity and old_by_identity[ident].get("api_key"):

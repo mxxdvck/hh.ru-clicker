@@ -15,6 +15,7 @@ from pathlib import Path
 import requests
 
 from app.logging_utils import log_debug
+from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
 from app.config import CONFIG, resolve_letter_text
 from app.hh_http import HH
 from app.mobile_auth import MobileAuthError
@@ -165,8 +166,7 @@ def _load_oauth_tokens():
     global _oauth_tokens
     try:
         if _OAUTH_FILE.exists():
-            with open(_OAUTH_FILE, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
+            loaded = secure_read_json(_OAUTH_FILE, {}, migrate=True)
             if not isinstance(loaded, dict):
                 # Файл существует, но внутри не объект (битый/чужой JSON) — сбрасываем
                 log_debug("OAuth: token file does not contain a dict, resetting")
@@ -178,31 +178,15 @@ def _load_oauth_tokens():
 
 
 def _save_oauth_tokens() -> bool:
-    """Atomic persist (tmp + replace) of OAuth tokens to disk."""
+    """Atomic encrypted persist of OAuth tokens to disk."""
     with _oauth_save_lock:
         try:
-            _OAUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
             with _oauth_lock:
                 snapshot = dict(_oauth_tokens)
-            # Уникальный tmp в той же директории: фиксированный .tmp конфликтовал
-            # между процессами и с backup-restore, который пишет свой .tmp.
-            fd, tmp_path = tempfile.mkstemp(
-                dir=_OAUTH_FILE.parent, prefix=".oauth_tokens.", suffix=".tmp"
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(snapshot, f, ensure_ascii=False, indent=2)
-                    f.flush()
-                    os.fsync(f.fileno())  # данные реально на диске до replace
-                os.chmod(tmp_path, 0o600)  # secrets — owner-only (до replace)
-                os.replace(tmp_path, _OAUTH_FILE)
-                return True
-            except (OSError, ValueError, TypeError) as e:
-                log_debug(f"OAuth: failed to save tokens: {e}")
-                Path(tmp_path).unlink(missing_ok=True)
-                return False
-        except (OSError, ValueError, TypeError) as e:
-            log_debug(f"OAuth: save outer error: {e}")
+            secure_write_json(_OAUTH_FILE, snapshot, encrypt=True)
+            return True
+        except (OSError, ValueError, TypeError, RuntimeError) as e:
+            log_debug(f"OAuth: failed to save tokens: {e}")
             return False
 
 

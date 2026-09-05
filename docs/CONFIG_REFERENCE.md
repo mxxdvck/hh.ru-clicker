@@ -1,8 +1,6 @@
 # CONFIG_REFERENCE — полный справочник конфигурации
 
 > Scope: `app/config.py` (класс `Config`), файл данных `data/config.json`.
-> Ветвь `refactor/mobile-api`, состояние включает uncommitted Phase 0
-> (поле `default_client_mode` + docstring-схема поля `mode`).
 > Все дефолты/типы взяты из class-атрибутов `Config`, поведение — из grep по usage.
 
 ---
@@ -12,10 +10,10 @@
 **In-memory:** singleton `CONFIG = Config()` (`app/config.py`). Все поля — class-атрибуты,
 mutable в runtime (без рестарта).
 
-**На диске:** `data/config.json` (chmod 0600 — внутри могут быть `llm_api_key` и PII
-в `letter_templates`). Запись: `save_config()` — атомарный write+rename через
-`.tmp`, сериализуется под `_config_write_lock`, исполняется в фоне через
-`app.storage._schedule_save` (fallback — daemon-thread).
+**На диске:** `data/config.json` (chmod 0600). `save_config()` использует
+`app.secure_store`: DPAPI на Windows, AES-GCM при `HH_BOT_DATA_KEY`, либо
+plaintext только когда secure backend недоступен и strict mode не включён.
+Запись атомарная; legacy plaintext автоматически мигрирует при загрузке.
 
 **Что персистится:** `save_config()` пишет `data = {k: getattr(CONFIG, k) for k in _CONFIG_KEYS}`
 плюс явные дописи остальных полей (templates, lists, llm_*). **Инвариант: поле,
@@ -36,9 +34,9 @@ mutable в runtime (без рестарта).
 | Способ | Механизм |
 |---|---|
 | UI дашборда (один ключ) | `POST /api/settings` `{key, value}` (`app/routes/settings.py:60`) — принимает только ключи из `_CONFIG_KEYS`, строгий `_safe_cast` к типу текущего значения (bool/int/float/str/list/dict), затем `save_config()`. Этим же путём идут smart-filter контролы UI и websocket/командный путь `set_config` в `app/routes/core.py:~150` |
-| UI дашборда (bulk raw-editor) | `GET /api/raw/config` / `POST /api/raw/config` (`app/routes/settings.py:91,102`) — принимает `_CONFIG_KEYS` + списки (`url_pool`, `allowed_schedules`, `title_*_keywords`, `questionnaire_templates`, `letter_templates`, `llm_profiles`) + все `llm_*`-ключи. Защита: пустой list/string не затирает непустое текущее значение без `?force=1` (anti-stale-state) |
-| Backup/restore | `GET/POST /api/backup` (`app/routes/settings.py`) — бандл `config.json` + `accounts.json` + `browser_sessions.json` + `oauth_tokens.json`; restore делает live-reload `load_config()`/`load_accounts()` |
-| Напрямую в файле | Правка `data/config.json` при остановленном приложении (при работе — будет перезаписан фоновым `save_config()` на любое изменение) |
+| UI dashboard (bulk raw-editor) | `GET /api/raw/config` / `POST /api/raw/config` - credential values are write-only: LLM API keys and authenticated proxy URLs are returned as `***`; saving the masked value preserves the existing secret. Lists and ordinary settings remain editable. |
+| Backup/restore | `GET/POST /api/backup` — полный backup шифруется secure-store backend; без backend выдаётся redacted export. Encrypted restore делает live-reload config/accounts/sessions/OAuth |
+| Direct file edit | Only in explicit plaintext mode. With DPAPI/AES-GCM enabled, use the Dashboard/API or `app.secure_store`; editing the encrypted envelope by hand is unsupported. |
 
 ---
 
@@ -62,6 +60,9 @@ Env-переменные в проекте **есть**, но полноценн
 | `HH_OAUTH_CLIENT_ID_2` / `HH_OAUTH_CLIENT_SECRET_2` | `""` | Второй OAuth client (fallback) (`app/oauth.py:31-32`) |
 | `HH_BOT_API_KEY` | `""` (auth выключен) | X-API-Key защита не-GET эндпоинтов дашборда (`app/routes/__init__.py:85`, `core.py:107`) |
 | `HH_BOT_ALLOWED_ORIGINS` | `""` | Доп. CORS origins (`app/routes/core.py:65`) |
+| `HH_BOT_DATA_KEY` | `""` | AES-GCM master secret for Linux/server and portable encrypted backups. Keep it outside Git. |
+| `HH_BOT_REQUIRE_ENCRYPTION` | `0` | `1` enables fail-closed storage: no plaintext fallback when a secure backend is unavailable. |
+| `HH_BOT_DISABLE_DATA_ENCRYPTION` | `""` | Compatibility escape hatch. Disables encryption explicitly; not recommended for normal use. |
 
 **Вывод:** вся пользовательская конфигурация — только через `data/config.json` /
 UI-эндпоинты; env — инфраструктурные настройки (прокси, OAuth-креды, auth дашборда).

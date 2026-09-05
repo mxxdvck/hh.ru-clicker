@@ -41,6 +41,8 @@ TOKENS_PATH = Path("data") / "oauth_tokens.json"
 USER_AGENT_BASE = "hh-clicker/1.0"
 USER_AGENT_MOBILE = "ru.hh.android/26.28.1"
 
+from app.secure_store import read_json as secure_read_json  # noqa: E402
+
 # 10 эндпоинтов для health-check (только GET).
 ENDPOINTS = [
     "/me",
@@ -101,8 +103,8 @@ def load_tokens() -> "tuple[dict | None, str]":
     if not TOKENS_PATH.exists():
         return None, f"файл токенов не найден: {TOKENS_PATH}"
     try:
-        data = json.loads(TOKENS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = secure_read_json(TOKENS_PATH, None, migrate=False)
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         return None, f"не удалось прочитать {TOKENS_PATH}: {exc}"
     if not isinstance(data, dict) or not data:
         return None, f"в {TOKENS_PATH} нет непустого словаря с токенами"
