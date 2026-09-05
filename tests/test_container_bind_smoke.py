@@ -84,7 +84,7 @@ def test_container_bind_docker_compose_smoke(tmp_path):
     publish_port = _free_port()
     smoke_env = tmp_path / "compose.env"
     smoke_data = tmp_path / "data"
-    smoke_data.mkdir()
+    smoke_data.mkdir(exist_ok=True)
     smoke_env.write_text(
         "HH_BOT_API_KEY=compose-smoke-test-key\n"
         "HH_BOT_DATA_KEY=compose-smoke-data-key-0123456789abcdef0123456789abcdef\n"
