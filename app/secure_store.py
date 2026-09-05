@@ -126,6 +126,10 @@ def is_secure_envelope(value: Any) -> bool:
 def decode_envelope(value: dict) -> Any:
     try:
         provider = str(value.get("provider") or "")
+        if provider not in {"dpapi", "aesgcm"}:
+            raise SecureStoreError(
+                f"Insecure or unsupported envelope provider: {provider or '<missing>'}"
+            )
         payload = base64.b64decode(str(value.get("payload") or ""), validate=True)
         raw = unprotect_bytes(provider, payload)
         return json.loads(raw.decode("utf-8"))

@@ -126,3 +126,14 @@ def test_wrong_key_cannot_overwrite_existing_encrypted_file(tmp_path, monkeypatc
         secure_store.write_json_atomic(path, {"secret": "replacement"})
 
     assert path.read_bytes() == before
+
+
+def test_plaintext_envelope_is_rejected():
+    envelope = {
+        secure_store.MAGIC: secure_store.VERSION,
+        "provider": "plaintext",
+        "payload": "eyJ4IjoxfQ==",
+    }
+
+    with pytest.raises(secure_store.SecureStoreError):
+        secure_store.decode_envelope(envelope)
