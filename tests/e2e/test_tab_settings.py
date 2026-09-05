@@ -274,6 +274,17 @@ def test_applicant_gender_three_levels_send_set_config(ui):
 
 # ── 7. applySettings(): все слайдеры одним кликом ──────────────────────────
 
+def test_applicant_gender_male_restores_from_snapshot_after_reload(ui):
+    page = _boot(ui, config={"llm_applicant_gender": "male"})
+    _open_filters_section(page)
+    expect(page.locator("#cfg-llm-applicant-gender")).to_have_value("male")
+
+    page.reload(wait_until="domcontentloaded")
+    _open_settings_tab(page)
+    _open_filters_section(page)
+    expect(page.locator("#cfg-llm-applicant-gender")).to_have_value("male")
+
+
 def test_apply_settings_sends_set_config_for_all_sliders(ui):
     cfg_values = {
         "pages_per_url": 25,
