@@ -10,8 +10,17 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
+
+
+def _now_msk_iso() -> str:
+    try:
+        now = datetime.now(ZoneInfo("Europe/Moscow"))
+    except Exception:
+        now = datetime.now(timezone(timedelta(hours=3)))
+    return now.isoformat(timespec="seconds")
 
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -578,7 +587,7 @@ def add_applied(account_name: str, vacancy_id: str, info: dict = None):
             "company": company,
             "salary_from": new_info.get("salary_from") or existing.get("salary_from"),
             "salary_to": new_info.get("salary_to") or existing.get("salary_to"),
-            "at": new_info.get("at") or existing.get("at") or datetime.now().isoformat()
+            "at": new_info.get("at") or existing.get("at") or _now_msk_iso()
         }
         total = sum(len(v) for v in _cache_applied.values())
         if total > _APPLIED_MAX:

@@ -10,7 +10,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app import storage
 
@@ -75,7 +76,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    """Return quota timestamps in Moscow time, independent of host timezone."""
+    try:
+        now = datetime.now(ZoneInfo("Europe/Moscow"))
+    except Exception:
+        now = datetime.now(timezone(timedelta(hours=3)))
+    return now.isoformat(timespec="seconds")
 
 def reserve_application(
     account_name: str,

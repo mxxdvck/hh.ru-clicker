@@ -511,3 +511,11 @@ def test_manual_recoverable_errors_release_reservation(monkeypatch):
         )
         assert status == "released"
         assert safety.reserve_apply("acc", vid, "resume", source="manual-retry").allowed
+
+
+def test_ledger_timestamp_uses_moscow_date_independent_of_host_timezone():
+    from datetime import datetime, timedelta
+    from app import application_ledger as ledger_module
+
+    stamp = datetime.fromisoformat(ledger_module._now())
+    assert stamp.utcoffset() == timedelta(hours=3)
