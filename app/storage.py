@@ -9,6 +9,7 @@ import os
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -61,7 +62,11 @@ def _atomic_write_json(path: Path, data) -> None:
 
 from app.logging_utils import log_debug
 from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
-from app.config import hh_base
+
+def _hh_base() -> str:
+    """Lazy import avoids the config <-> storage import cycle."""
+    from app.config import hh_base
+    return hh_base()
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True, mode=0o700)
@@ -80,6 +85,25 @@ SESSIONS_FILE = DATA_DIR / "browser_sessions.json"
 # Один FIFO-worker сохраняет порядок snapshots: более старое состояние не
 # сможет записаться после нового и «откатить» config/accounts на диске.
 _save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="storage-save")
+_persistence_gate = threading.RLock()
+
+
+@contextmanager
+def persistence_transaction():
+    """Block new persistent writes while a multi-file transaction is running."""
+    with _persistence_gate:
+        yield
+
+
+def wait_for_pending_saves(timeout: float = 10.0) -> None:
+    """Wait until every save queued before this call has completed."""
+    with _persistence_gate:
+        try:
+            barrier = _save_executor.submit(lambda: None)
+        except RuntimeError:
+            return
+        barrier.result(timeout=timeout)
+
 
 _INTERVIEWS_MAX = 10000
 _INTERVIEWS_EVICT = 1000
@@ -88,21 +112,15 @@ _APPLIED_EVICT = 1000
 EVENTS_FILE = DATA_DIR / "events.jsonl"
 
 def _schedule_save(fn):
-    """Async-save: submit на shared pool вместо нового Thread каждый раз.
-    Per-save lock с blocking=False уже защищает от concurrent дублей.
-
-    Round-3 #2: если executor уже shutdown (bot.stop() пошёл, а поздний
-    worker всё ещё пытается писать через add_applied) — раньше молча
-    дропали запись. Теперь вызываем sync inline как последний шанс:
-    данные попадут на диск ДО exit'а процесса.
-    """
-    try:
-        _save_executor.submit(fn)
-    except RuntimeError:
+    """Queue a save while respecting multi-file persistence transactions."""
+    with _persistence_gate:
         try:
-            fn()  # sync fallback — writer уже atomic, безопасно
-        except Exception as e:
-            log_debug(f"_schedule_save sync fallback error: {e}")
+            _save_executor.submit(fn)
+        except RuntimeError:
+            try:
+                fn()  # sync fallback after executor shutdown
+            except Exception as e:
+                log_debug(f"_schedule_save sync fallback error: {e}")
 
 
 # ============================================================
@@ -526,7 +544,8 @@ def save_browser_sessions(sessions: list, *, wait: bool = False):
                         raise
                     return
     if wait:
-        _write()
+        with _persistence_gate:
+            _write()
     else:
         _schedule_save(_write)
 
@@ -554,7 +573,7 @@ def add_applied(account_name: str, vacancy_id: str, info: dict = None):
         title = new_info.get("title") or existing.get("title", "")
         company = new_info.get("company") or existing.get("company", "")
         _cache_applied[account_name][vacancy_id] = {
-            "url": f"{hh_base()}/vacancy/{vacancy_id}",
+            "url": f"{_hh_base()}/vacancy/{vacancy_id}",
             "title": title,
             "company": company,
             "salary_from": new_info.get("salary_from") or existing.get("salary_from"),
@@ -584,7 +603,7 @@ def add_test_vacancy(vacancy_id: str, title: str = "", company: str = "",
             _tests_dirty = True
             _tests_mut_seq += 1
             _cache_tests[vacancy_id] = {
-                "url": f"{hh_base()}/vacancy/{vacancy_id}",
+                "url": f"{_hh_base()}/vacancy/{vacancy_id}",
                 "title": title,
                 "company": company,
                 "account_name": account_name,
@@ -627,7 +646,7 @@ def get_applied_list(limit: int = 300) -> list:
             all_items.append({
                 "account": acc_name,
                 "vacancy_id": vid,
-                "url": info.get("url", f"{hh_base()}/vacancy/{vid}"),
+                "url": info.get("url", f"{_hh_base()}/vacancy/{vid}"),
                 "title": info.get("title", ""),
                 "company": info.get("company", ""),
                 "salary_from": info.get("salary_from"),
@@ -654,7 +673,7 @@ def get_vacancy_db(limit: int = 3000) -> list:
             if vid not in db:
                 db[vid] = {
                     "vacancy_id": vid,
-                    "url": info.get("url", f"{hh_base()}/vacancy/{vid}"),
+                    "url": info.get("url", f"{_hh_base()}/vacancy/{vid}"),
                     "title": info.get("title", ""),
                     "company": info.get("company", ""),
                     "at": info.get("at", ""),
@@ -673,7 +692,7 @@ def get_vacancy_db(limit: int = 3000) -> list:
         if vid not in db:
             db[vid] = {
                 "vacancy_id": vid,
-                "url": info.get("url", f"{hh_base()}/vacancy/{vid}"),
+                "url": info.get("url", f"{_hh_base()}/vacancy/{vid}"),
                 "title": info.get("title", ""),
                 "company": info.get("company", ""),
                 "at": info.get("at", ""),
@@ -711,7 +730,7 @@ def get_test_list(limit: int = 300) -> list:
     for vid, info in tests.items():
         items.append({
             "vacancy_id": vid,
-            "url": info.get("url", f"{hh_base()}/vacancy/{vid}"),
+            "url": info.get("url", f"{_hh_base()}/vacancy/{vid}"),
             "title": info.get("title", ""),
             "company": info.get("company", ""),
             "account_name": info.get("account_name", ""),

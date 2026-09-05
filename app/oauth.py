@@ -16,6 +16,7 @@ import requests
 
 from app.logging_utils import log_debug
 from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
+from app.storage import persistence_transaction
 from app.config import CONFIG, resolve_letter_text
 from app.hh_http import HH
 from app.mobile_auth import MobileAuthError
@@ -179,15 +180,16 @@ def _load_oauth_tokens():
 
 def _save_oauth_tokens() -> bool:
     """Atomic encrypted persist of OAuth tokens to disk."""
-    with _oauth_save_lock:
-        try:
-            with _oauth_lock:
-                snapshot = dict(_oauth_tokens)
-            secure_write_json(_OAUTH_FILE, snapshot, encrypt=True)
-            return True
-        except (OSError, ValueError, TypeError, RuntimeError) as e:
-            log_debug(f"OAuth: failed to save tokens: {e}")
-            return False
+    with persistence_transaction():
+        with _oauth_save_lock:
+            try:
+                with _oauth_lock:
+                    snapshot = dict(_oauth_tokens)
+                secure_write_json(_OAUTH_FILE, snapshot, encrypt=True)
+                return True
+            except (OSError, ValueError, TypeError, RuntimeError) as e:
+                log_debug(f"OAuth: failed to save tokens: {e}")
+                return False
 
 
 # Load on import

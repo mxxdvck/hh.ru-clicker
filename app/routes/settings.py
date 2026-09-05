@@ -3,6 +3,8 @@ Settings and raw config/accounts routes.
 """
 
 import json
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Union
@@ -12,7 +14,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.config import CONFIG, accounts_data, _CONFIG_KEYS, save_config, save_accounts
-from app.storage import load_browser_sessions, save_browser_sessions, DATA_DIR
+from app.storage import (
+    DATA_DIR, load_browser_sessions, persistence_transaction,
+    save_browser_sessions, wait_for_pending_saves,
+)
 from app.logging_utils import log_debug
 from app.secure_store import (
     SecureStoreError, backend_name, decode_envelope, encode_envelope,
@@ -25,7 +30,7 @@ router = APIRouter()
 
 
 def _quiesce_runtime(bot) -> None:
-    """Остановить account/temp workers без глобального stop_event manager-а."""
+    """Stop account/temp workers before destructive persistence operations."""
     states = list(bot.account_states) + list(bot.temp_states.values())
     for state in states:
         state._deleted = True
@@ -36,12 +41,19 @@ def _quiesce_runtime(bot) -> None:
                 ws.stop()
             except Exception:
                 pass
+
+    alive = []
     for state in states:
         for worker in getattr(state, "_workers", []):
             try:
                 worker.join(timeout=5)
+                if callable(getattr(worker, "is_alive", None)) and worker.is_alive():
+                    alive.append(worker)
             except Exception:
-                pass
+                alive.append(worker)
+    if alive:
+        raise RuntimeError(f"Cannot quiesce runtime: {len(alive)} worker(s) still running")
+
     bot.account_states.clear()
     bot.temp_states.clear()
 
@@ -313,13 +325,102 @@ async def api_raw_accounts_set(request: Request):
 
 
 # ============================================================
-# BACKUP / RESTORE — единый JSON со всем (включая cookies/API-keys).
+# BACKUP / RESTORE - encrypted or redacted export; secrets are never returned as plaintext.
 # Доступ ВСЕГДА требует API-key — проверка в middleware (app/routes/__init__.py,
 # _ALWAYS_AUTH_PREFIXES), даже при пустом HH_BOT_API_KEY.
 # ============================================================
 
 _BACKUP_FILES = ("config.json", "accounts.json", "browser_sessions.json", "oauth_tokens.json")
+_BACKUP_TYPES = {
+    "config.json": dict,
+    "accounts.json": list,
+    "browser_sessions.json": list,
+    "oauth_tokens.json": dict,
+}
 
+
+def _restore_raw_snapshot(path: Path, raw: bytes | None) -> None:
+    """Restore exact pre-transaction bytes with an atomic same-directory replace."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if raw is None:
+        path.unlink(missing_ok=True)
+        return
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".rollback.", suffix=".tmp", dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _rollback_backup_snapshot(snapshot: dict[str, bytes | None]) -> dict[str, str]:
+    rollback_errors = {}
+    for fname, raw in snapshot.items():
+        try:
+            _restore_raw_snapshot(Path(DATA_DIR) / fname, raw)
+        except Exception as exc:
+            rollback_errors[fname] = str(exc)
+    return rollback_errors
+
+
+def _apply_prepared_restore(prepared: dict, bot, force: bool = False):
+    """Apply validated restore data after draining all earlier persistent writes."""
+    wait_for_pending_saves()
+    preserved_all = []
+    if not force:
+        for fname, payload in tuple(prepared.items()):
+            if fname not in _PROTECTED_FIELDS:
+                continue
+            current = _load_json_file(fname) or {}
+            merged, preserved = _merge_preserve(
+                payload, current, _PROTECTED_FIELDS[fname], path=f"{fname}/"
+            )
+            prepared[fname] = merged
+            preserved_all.extend(preserved)
+
+    snapshot = {}
+    for fname in prepared:
+        path = Path(DATA_DIR) / fname
+        snapshot[fname] = path.read_bytes() if path.exists() else None
+
+    restored = []
+    errors = {}
+    rollback_errors = {}
+    for fname, payload in prepared.items():
+        try:
+            path = Path(DATA_DIR) / fname
+            secure_write_json(path, payload, encrypt=True)
+            restored.append(fname)
+        except Exception as exc:
+            errors[fname] = str(exc)
+            rollback_errors = _rollback_backup_snapshot(snapshot)
+            restored.clear()
+            if rollback_errors:
+                log_debug(f"backup restore: rollback errors: {rollback_errors}")
+            break
+
+    reload_error = ""
+    try:
+        from app.config import load_config as _load_config, load_accounts as _load_accounts
+        _load_config()
+        _load_accounts()
+        bot.temp_sessions[:] = load_browser_sessions()
+        from app import oauth as _oauth
+        _oauth._load_oauth_tokens()
+    except Exception as exc:
+        reload_error = str(exc)
+        log_debug(f"backup restore: live-reload error: {exc}")
+
+    return restored, preserved_all, errors, rollback_errors, reload_error
 
 def _load_json_file(name: str):
     p = Path(DATA_DIR) / name
@@ -368,8 +469,10 @@ async def api_backup_download(redacted: int = 0):
         "version": 2,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
     }
-    for fname in _BACKUP_FILES:
-        bundle[fname] = _load_json_file(fname)
+    with persistence_transaction():
+        wait_for_pending_saves()
+        for fname in _BACKUP_FILES:
+            bundle[fname] = _load_json_file(fname)
 
     provider = backend_name()
     force_redacted = bool(redacted) or provider == "plaintext"
@@ -422,9 +525,11 @@ def _merge_preserve(payload, current, protected: set, path: str = "") -> tuple:
 
 @router.post("/api/backup")
 async def api_backup_restore(request: Request, force: int = 0):
-    """Восстановить из бэкапа. Принимает JSON, сделанный GET /api/backup.
-    Перезаписывает ВСЕ data/*.json файлы. Защита: пустые list/string не затирают
-    непустые существующие (для llm_profiles, letter_templates и т.д.) если ?force=0."""
+    """Restore a validated backup. Any write failure rolls all supplied files back.
+
+    Restore requires an active secure-storage backend. Runtime workers are quiesced
+    before disk changes, so the bot process must be restarted after an attempted restore.
+    """
     try:
         data = await request.json()
     except Exception:
@@ -440,100 +545,139 @@ async def api_backup_restore(request: Request, force: int = 0):
             return {"ok": False, "error": "Decrypted backup has an invalid format"}
     if data.get("redacted") is True:
         return {"ok": False, "error": "Redacted backup cannot restore secrets"}
+    provider = backend_name()
+    if provider == "plaintext":
+        return {
+            "ok": False,
+            "error": "Secure storage is unavailable; configure HH_BOT_DATA_KEY before restore",
+        }
     if not any(name in data for name in _BACKUP_FILES):
         return {"ok": False, "error": "Backup contains no supported data files"}
-    restored = []
-    errors = {}
-    preserved_all = []
-    from app.instances import bot as _bot
-    _quiesce_runtime(_bot)
+
+    prepared = {}
     for fname in _BACKUP_FILES:
-        if fname not in data:
+        if fname not in data or data[fname] is None:
             continue
         payload = data[fname]
-        if payload is None:
-            continue
-        # Защита: для известных файлов сохраняем непустые поля если входящие пустые.
-        if not force and fname in _PROTECTED_FIELDS:
-            current = _load_json_file(fname) or {}
-            payload, preserved_keys = _merge_preserve(
-                payload, current, _PROTECTED_FIELDS[fname], path=f"{fname}/"
-            )
-            preserved_all.extend(preserved_keys)
-        try:
-            # Аудит 2026-08-17 #9: раньше restore писал через фиксированный
-            # `<name>.tmp` — тот же путь, что и обычные save_* writers → гонка
-            # unlink/replace могла удалить чужой tmp или откатить только что
-            # сохранённые изменения. Используем _atomic_write_json (fsync +
-            # tmp.replace) для durability и не пересекаемся с writers по имени.
-            p = Path(DATA_DIR) / fname
-            secure_write_json(p, payload, encrypt=True)
-            restored.append(fname)
-        except Exception as e:
-            errors[fname] = str(e)
+        expected_type = _BACKUP_TYPES[fname]
+        if not isinstance(payload, expected_type):
+            return {
+                "ok": False,
+                "error": f"Invalid {fname}: expected {expected_type.__name__}",
+            }
 
-    # Reload live state from disk so user не должен рестартовать руками.
+        try:
+            # Validate encryption before touching any existing file.
+            encode_envelope(payload, provider)
+        except SecureStoreError as exc:
+            return {"ok": False, "error": f"Cannot encrypt {fname}: {exc}"}
+        prepared[fname] = payload
+
+    if not prepared:
+        return {"ok": False, "error": "Backup contains no restorable data"}
+
+    from app.instances import bot as _bot
     try:
-        from app.config import load_config as _load_config, load_accounts as _load_accounts
-        _load_config()
-        _load_accounts()
-        _bot.temp_sessions[:] = load_browser_sessions()
-        from app import oauth as _oauth
-        _oauth._load_oauth_tokens()
-    except Exception as e:
-        log_debug(f"backup restore: live-reload error: {e}")
+        _quiesce_runtime(_bot)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc), "restart_required": True}
+
+    try:
+        with persistence_transaction():
+            restored, preserved_all, errors, rollback_errors, reload_error = _apply_prepared_restore(
+                prepared, _bot, force=bool(force)
+            )
+    except OSError as exc:
+        return {
+            "ok": False,
+            "error": f"Cannot snapshot current data before restore: {exc}",
+            "restart_required": True,
+        }
+    except Exception as exc:
+        log_debug(f"backup restore: transaction error: {exc}")
+        return {"ok": False, "error": f"Restore transaction failed: {exc}", "restart_required": True}
+
+    if rollback_errors:
+        warning = "Restore failed and rollback was incomplete; inspect rollback_errors, then restart the bot"
+    elif errors:
+        warning = "Restore failed; all changed backup files were rolled back; restart the bot"
+    elif reload_error:
+        warning = "Files restored, but live reload failed; restart the bot before continuing"
+    else:
+        warning = "Restore completed; restart the bot before continuing"
 
     return {
-        "ok": not errors,
+        "ok": not errors and not reload_error,
         "restored": restored,
         "preserved": preserved_all,
         "errors": errors,
-        "warning": "Аккаунты/cookies применены. Для новых аккаунтов нужен перезапуск бота.",
+        "rolled_back": bool(errors) and not rollback_errors,
+        "rollback_errors": rollback_errors,
+        "reload_error": reload_error,
+        "warning": warning,
+        "restart_required": True,
     }
 
 
 @router.delete("/api/backup")
 async def api_backup_wipe():
-    """Полная очистка: удалить все data/*.json (config, accounts, browser_sessions,
-    oauth_tokens). После — in-memory state сбрасывается до дефолтов."""
+    """Clear sensitive persisted state without allowing queued writes to resurrect it."""
     from app.instances import bot as _bot
-    _quiesce_runtime(_bot)
+    try:
+        _quiesce_runtime(_bot)
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc), "restart_required": True}
+
     cleared = []
     errors = {}
-    for fname in _BACKUP_FILES:
-        p = Path(DATA_DIR) / fname
-        try:
-            if p.exists():
-                p.unlink()
-                cleared.append(fname)
-        except Exception as e:
-            errors[fname] = str(e)
-    # Сброс in-memory state.
     try:
-        from app.config import CONFIG as _CONFIG, Config as _ConfigCls, save_config as _save_config
-        accounts_data.clear()
-        _bot.temp_sessions.clear()
-        save_browser_sessions([], wait=True)
-        # Аудит 2026-08-17 #32: раньше файл удаляли, но CONFIG в памяти жил
-        # → первый же save_config() возвращал llm_api_key/llm_profiles на диск.
-        # Заменяем sensitive-поля CONFIG на дефолтные (из свежего Config()) и
-        # атомарно сохраняем очищенное состояние, чтобы утечка была невозможна.
-        _defaults = _ConfigCls()
-        _SENSITIVE = (
-            "llm_api_key", "llm_base_url", "llm_model", "llm_profiles",
-            "llm_system_prompt", "hh_proxy_url",
-        )
-        for _f in _SENSITIVE:
-            if hasattr(_defaults, _f):
-                setattr(_CONFIG, _f, getattr(_defaults, _f))
-        _CONFIG.llm_enabled = False
-        _CONFIG.llm_auto_send = False
-        _save_config()  # запишем чистый файл
-    except Exception as e:
-        log_debug(f"backup wipe: in-memory clear error: {e}")
+        with persistence_transaction():
+            wait_for_pending_saves()
+            for fname in _BACKUP_FILES:
+                path = Path(DATA_DIR) / fname
+                try:
+                    if path.exists():
+                        path.unlink()
+                        cleared.append(fname)
+                except Exception as exc:
+                    errors[fname] = str(exc)
+
+            from app.config import CONFIG as _CONFIG, Config as _ConfigCls, config_snapshot
+            from app import oauth as _oauth
+            accounts_data.clear()
+            _bot.temp_sessions.clear()
+            with _oauth._oauth_lock:
+                _oauth._oauth_tokens.clear()
+
+            defaults = _ConfigCls()
+            sensitive_fields = (
+                "llm_api_key", "llm_base_url", "llm_model", "llm_profiles",
+                "llm_system_prompt", "hh_proxy_url",
+            )
+            for field in sensitive_fields:
+                if hasattr(defaults, field):
+                    setattr(_CONFIG, field, getattr(defaults, field))
+            _CONFIG.llm_enabled = False
+            _CONFIG.llm_auto_send = False
+
+            clean_config = config_snapshot()
+            clean_config.pop("mobile_auth", None)
+            secure_write_json(Path(DATA_DIR) / "config.json", clean_config, encrypt=True)
+            secure_write_json(Path(DATA_DIR) / "accounts.json", [], encrypt=True)
+            save_browser_sessions([], wait=True)
+            if not _oauth._save_oauth_tokens():
+                errors["oauth_tokens.json"] = "failed to persist cleared OAuth state"
+    except Exception as exc:
+        log_debug(f"backup wipe: transactional clear error: {exc}")
+        errors["transaction"] = str(exc)
+
     return {
         "ok": not errors,
         "cleared": cleared,
         "errors": errors,
-        "warning": "In-memory очищено. Перезапуск бота не требуется.",
+        "warning": (
+            "Sensitive state cleared. Restart the bot before continuing."
+            if not errors else "Wipe incomplete; inspect errors and restart the bot."
+        ),
+        "restart_required": True,
     }
