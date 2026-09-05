@@ -31,6 +31,7 @@ from app.mobile_related import get_suitable_resumes
 # vacancy_archived/permission_denied — из брифа). Порядок перечисления
 # определяет приоритет: возвращается ПЕРВЫЙ найденный в payload'е код.
 KNOWN_ERROR_CODES = (
+    "letter_required",
     "test_required",
     "limit_exceeded",
     "vacancy_not_found",
@@ -48,6 +49,7 @@ KNOWN_ERROR_CODES = (
 
 # Короткие описания бизнес-кодов для поля "error" результата.
 _ERROR_DESCRIPTIONS = {
+    "letter_required": "cover letter is required",
     "test_required": "вакансия требует тестовое задание",
     "limit_exceeded": "лимит откликов исчерпан",
     "vacancy_not_found": "вакансия не найдена",
@@ -123,6 +125,8 @@ def _extract_error_code(payload) -> str:
     except (TypeError, ValueError):
         text = str(payload)
     text = text.lower()
+    if "letter required" in text or ("bad_argument" in text and "message" in text and "letter" in text):
+        return "letter_required"
     for code in KNOWN_ERROR_CODES:
         if code in text:
             return code
@@ -158,6 +162,13 @@ def submit_response(acc: dict, vacancy_id: str, resume_id: str,
     - fallback-статусы (0 сеть / 401 / 403 / 5xx): MobileAPIError
       перекидывается наверх без обработки — для повтора через web-flow.
     """
+    if CONFIG.search_only_mode:
+        return {
+            "ok": False,
+            "error_type": "search_only",
+            "error": "application sending disabled by search_only_mode",
+        }
+
     resume_id = pick_suitable_resume(acc, vacancy_id, resume_id)
     if resume_id is None:
         return {
@@ -182,6 +193,9 @@ def submit_response(acc: dict, vacancy_id: str, resume_id: str,
     if source_label:
         params["source_label"] = source_label
     try:
+        if CONFIG.search_only_mode:
+            return {"ok": False, "error_type": "search_only",
+                    "error": "application sending disabled by search_only_mode at transport boundary"}
         data = mobile_request(
             acc, "POST", "/negotiations",
             params=params,

@@ -850,6 +850,12 @@
                 onchange="sendCmd({type:'set_config',key:'daily_apply_limit',value:parseInt(this.value)||0})">
               <span style="font-size:11px;color:var(--dim)">(0 = без лимита)</span>
             </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+              &#1053;&#1072; &#1086;&#1076;&#1080;&#1085; &#1079;&#1072;&#1087;&#1091;&#1089;&#1082;:
+              <input type="number" id="run-apply-limit" class="apply-input" style="width:70px;font-size:12px;padding:2px 6px" min="0" max="500" value="0"
+                onchange="sendCmd({type:'set_config',key:'run_apply_limit',value:parseInt(this.value)||0})">
+              <span style="font-size:11px;color:var(--dim)">(0 = &#1073;&#1077;&#1079; &#1083;&#1080;&#1084;&#1080;&#1090;&#1072;)</span>
+            </label>
           </div>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
             <input type="checkbox" id="stop-on-hh-limit" style="accent-color:var(--red)" checked
@@ -1003,10 +1009,10 @@
           <input type="checkbox" id="llm-use-cover-letter" style="accent-color:var(--yellow)" checked onchange="_llmMarkEditing()">
           Учитывать сопроводительное письмо
         </label>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer" title="DeepSeek генерирует отдельное короткое письмо под каждую вакансию по описанию вакансии и резюме. Шаблон остаётся fallback.">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer" title="LLM генерирует отдельное короткое письмо под каждую вакансию по описанию вакансии и резюме. Шаблон остаётся fallback.">
           <input type="checkbox" id="llm-generate-cover-letter" style="accent-color:var(--purple,#c084fc)"
                  onchange="sendCmd({type:'set_config',key:'llm_generate_cover_letter',value:this.checked})">
-          ✍️ DeepSeek пишет сопроводительные
+          ✍️ LLM пишет сопроводительные
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
           <input type="checkbox" id="llm-use-resume" style="accent-color:var(--cyan)" checked onchange="_llmMarkEditing()">

@@ -21,7 +21,12 @@ def tmp_data_dir(tmp_path, monkeypatch):
     добавить fixture в аргументы.
     """
     data_dir = tmp_path / "data"
-    data_dir.mkdir(exist_ok=True)  # тесты могут пересоздать сами — не падаем
+    data_dir.mkdir(exist_ok=True)
+    try:
+        from app.config import CONFIG
+        monkeypatch.setattr(CONFIG, "search_only_mode", False)
+    except ImportError:
+        pass  # тесты могут пересоздать сами — не падаем
     # НЕ chdir: сломало бы тесты, читающие исходники по относительным путям
     # (test_collect_page_debug_logging и др.). Патчим DATA_DIR + FILE-константы
     # in-place — этого достаточно чтобы load/save шли в tmp.

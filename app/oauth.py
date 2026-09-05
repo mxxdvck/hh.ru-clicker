@@ -15,7 +15,7 @@ from pathlib import Path
 import requests
 
 from app.logging_utils import log_debug
-from app.config import CONFIG
+from app.config import CONFIG, resolve_letter_text
 from app.hh_http import HH
 from app.mobile_auth import MobileAuthError
 from app.user_agent import mobile_user_agent
@@ -1061,7 +1061,15 @@ def fetch_resume_status(acc: dict, force: bool = False) -> dict:
 
 def _oauth_apply(acc: dict, vid: str, message: str = "") -> tuple:
     """Apply to vacancy via OAuth API. Returns (result_str, info_dict)."""
+    if CONFIG.search_only_mode:
+        return "error", {"error_type": "search_only", "raw": "application sending disabled by search_only_mode"}
+
     from app.llm import _randomize_text
+    if not message:
+        # Keep OAuth behavior aligned with web/mobile: an account may rely on
+        # the configured fallback cover-letter template. Import lazily to avoid
+        # the module-level hh_apply <-> oauth dependency cycle.
+        message = resolve_letter_text(acc)
     token = _obtain_oauth_token(acc)
     if not token:
         return "error", {"exception": "OAuth token не получен"}
@@ -1072,6 +1080,8 @@ def _oauth_apply(acc: dict, vid: str, message: str = "") -> tuple:
         data = {"vacancy_id": vid, "resume_id": resume_hash_quoted}
         if message:
             data["message"] = message
+        if CONFIG.search_only_mode:
+            return "error", {"error_type": "search_only", "raw": "application sending disabled at OAuth transport boundary"}
         r = HH.post(
             "https://api.hh.ru/negotiations",
             headers={"User-Agent": _mobile_user_agent(), "Authorization": f"Bearer {token}",

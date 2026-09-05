@@ -1,6 +1,7 @@
 {
   "_doc": "Safe public example. Copy to data/config.json and adjust locally. data/ is gitignored.",
   "daily_apply_limit": 20,
+  "run_apply_limit": 20,
   "search_only_mode": true,
   "merge_saved_searches": false,
   "auto_resume_search_enabled": false,

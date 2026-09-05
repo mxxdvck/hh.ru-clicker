@@ -27,6 +27,7 @@ import types
 import pytest
 
 import app.routes.apply as apply_route
+from app import apply_safety
 from app.hh_client_fallback import FallbackHHClient
 from app.instances import bot
 from app.routes.apply import _result_to_response, api_apply_submit
@@ -138,7 +139,7 @@ def bot_stub(monkeypatch):
         bot, "_add_log",
         lambda short, color, msg, level="info", neg_id="": logs.append((short, color, msg, level)),
     )
-    monkeypatch.setattr(apply_route, "add_applied",
+    monkeypatch.setattr(apply_safety.storage, "add_applied",
                         lambda name, vid, info=None: applied.append((name, vid)))
     return {"acc": acc, "state": state, "logs": logs, "applied": applied}
 

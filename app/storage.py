@@ -559,7 +559,7 @@ def add_applied(account_name: str, vacancy_id: str, info: dict = None):
             "company": company,
             "salary_from": new_info.get("salary_from") or existing.get("salary_from"),
             "salary_to": new_info.get("salary_to") or existing.get("salary_to"),
-            "at": datetime.now().isoformat()
+            "at": new_info.get("at") or existing.get("at") or datetime.now().isoformat()
         }
         total = sum(len(v) for v in _cache_applied.values())
         if total > _APPLIED_MAX:

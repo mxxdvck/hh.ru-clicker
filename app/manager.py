@@ -214,6 +214,8 @@ from app.llm import (generate_llm_reply, generate_llm_cover_letter, _openclaw_co
                      get_llm_last_status, get_llm_status_summary)
 
 from app.hh_client_factory import get_client
+from app.apply_safety import reserve_apply, finalize_apply
+from app.application_ledger import mark_interrupted_startup, mark_application, list_interrupted
 
 from app.hh_chat import (
     _build_thread_from_chat_item, _check_chat_locked,
@@ -466,10 +468,11 @@ class BotManager:
         return None
 
     def _get_apply_state(self, idx: int):
-        """Вернуть AccountState или None для temp-сессий"""
+        """Return live AccountState for regular or active temporary sessions."""
         if 0 <= idx < len(self.account_states):
             return self.account_states[idx]
-        return None
+        temp_idx = idx - len(self.account_states)
+        return self.temp_states.get(temp_idx)
 
     def _start_ws_push(self, state) -> None:
         """Подписать аккаунт на chatik WS push.
@@ -565,6 +568,9 @@ class BotManager:
         self._workers: list = []
         _load_cache()
         load_config()
+        interrupted = mark_interrupted_startup()
+        if interrupted:
+            log_debug(f"apply ledger: {interrupted} unresolved sends marked interrupted after restart")
         # После load_config: если env HH_PROXY не задан, но в CONFIG.hh_proxy_url
         # что-то сохранено (пользователь выставлял через UI) — применить.
         # env всегда приоритет чтобы docker-compose override работал.
@@ -710,8 +716,15 @@ class BotManager:
         if not state:
             return
         with state._state_lock:
+            previous_pause_reason = state.paused_reason
             state.paused = not state.paused
             if not state.paused:
+                # Explicit resume after a per-run cap starts a new run. Daily/HH
+                # caps still apply, so this cannot bypass the real daily ceiling.
+                if previous_pause_reason == "run_limit":
+                    from app.application_ledger import new_run_id
+                    state.apply_run_id = new_run_id()
+                    state._apply_reconciled_run_id = ""
                 # Reset hard stop / limit so worker can continue
                 state.hard_stopped = False
                 state.limit_exceeded = False
@@ -1351,6 +1364,136 @@ class BotManager:
             "vacancy_queues": _vacancy_queues,
         }
 
+    def _prepare_apply_accounts(self, state: AccountState, acc: dict, batch: list[str]) -> dict[str, dict]:
+        """Prepare an independent account/letter for every vacancy in a batch.
+
+        One LLM-generated letter must never be reused for another vacancy.
+        Fallback templates are resolved later by the concrete HH client.
+        """
+        prepared = {str(vid): acc for vid in batch}
+        if not CONFIG.llm_generate_cover_letter or not batch:
+            return prepared
+
+        resume_text = ""
+        if CONFIG.llm_use_resume:
+            try:
+                resume_data = get_client(acc).fetch_resume()
+                if isinstance(resume_data, dict):
+                    resume_text = (resume_data.get("text", "") if "text" in resume_data
+                                   else json.dumps(resume_data, ensure_ascii=False))
+                else:
+                    resume_text = str(resume_data or "")
+            except Exception as exc:
+                log_debug(f"cover-letter resume [{state.short}]: {exc}")
+
+        for vid in batch:
+            vid = str(vid)
+            meta = dict(state.vacancy_meta.get(vid, {}) or {})
+            try:
+                details = fetch_vacancy_details(acc, vid) or {}
+                if details:
+                    meta.update({
+                        "key_skills": details.get("key_skills") or meta.get("key_skills") or [],
+                        "description": details.get("description") or meta.get("description") or "",
+                        "response_letter_required": details.get("response_letter_required"),
+                    })
+                generated = generate_llm_cover_letter(
+                    vacancy_title=meta.get("title", ""),
+                    company=meta.get("company", ""),
+                    vacancy_description=meta.get("description", ""),
+                    key_skills=meta.get("key_skills") or [],
+                    resume_text=resume_text,
+                    account_key=f"cover:{state.short}:{vid}",
+                    max_length=meta.get("letter_max_length"),
+                )
+                if generated:
+                    send_acc = dict(acc)
+                    send_acc["letter"] = generated
+                    prepared[vid] = send_acc
+                    self._add_log(state.short, state.color,
+                                  f"LLM cover letter {vid}: {len(generated)} chars", "info")
+                else:
+                    self._add_log(state.short, state.color,
+                                  f"LLM returned no cover letter for {vid}; using fallback", "warning")
+            except Exception as exc:
+                log_debug(f"cover-letter [{state.short}] {vid}: {exc}")
+                self._add_log(state.short, state.color,
+                              f"LLM cover-letter error for {vid}; using fallback", "warning")
+        return prepared
+
+    def _sync_hh_apply_count(self, state: AccountState, force: bool = True) -> dict:
+        """Refresh HH's authoritative daily application count before sending."""
+        try:
+            info = fetch_negotiations_today_count(state.acc, force=force) or {}
+            if info and info.get("msk_date") == _today_msk():
+                count = max(int(info.get("today") or 0), 0)
+                with state._state_lock:
+                    state.hh_today_applies = count
+                    state.hh_today_applies_updated = datetime.now().isoformat(timespec="seconds")
+                return info
+            if info:
+                log_debug(f"HH count [{state.short}] ignored stale date={info.get('msk_date')}")
+        except Exception as exc:
+            log_debug(f"HH count sync [{state.short}] failed: {exc}")
+        return {}
+
+    def _reconcile_interrupted_applications(self, state: AccountState) -> dict:
+        """Resolve crash-window sends without ever retrying them blindly.
+
+        A row left as ``interrupted`` means the process died after reserving an
+        application but before recording HH's response. We only upgrade it to
+        ``applied`` when HH negotiations explicitly contain the vacancy id.
+        Everything else stays interrupted and therefore remains blocked.
+        """
+        run_id = str(getattr(state, "apply_run_id", "") or "")
+        if getattr(state, "_apply_reconciled_run_id", "") == run_id:
+            return {"checked": 0, "recovered": 0, "unresolved": 0}
+        rows = list_interrupted(state.name)
+        if not rows:
+            state._apply_reconciled_run_id = run_id
+            return {"checked": 0, "recovered": 0, "unresolved": 0}
+
+        vacancy_ids: set[str] = set()
+        try:
+            client = get_client(state.acc)
+            stats = client.fetch_negotiations(max_pages=5) or {}
+            if stats.get("auth_error"):
+                raise RuntimeError("HH negotiations authentication failed")
+            vacancy_ids.update(str(v) for v in (stats.get("vacancy_ids") or []) if v)
+            if not vacancy_ids:
+                meta = client.fetch_negotiations_metadata() or {}
+                vacancy_ids.update(str(v) for v in ((meta.get("topics_by_vid") or {}).keys()) if v)
+        except Exception as exc:
+            log_debug(f"apply reconciliation [{state.short}] deferred: {exc}")
+            self._add_log(state.short, state.color,
+                          "Crash-recovery: HH check failed, ambiguous applications stay blocked",
+                          "warning")
+            return {"checked": len(rows), "recovered": 0, "unresolved": len(rows)}
+
+        recovered = 0
+        for row in rows:
+            vid = str(row.get("vacancy_id") or "")
+            if vid not in vacancy_ids:
+                continue
+            applied_at = str(row.get("attempted_at") or row.get("created_at") or "")
+            mark_application(state.name, vid, str(row.get("resume_id") or ""),
+                             status="applied", detail="reconciled from HH negotiations after restart",
+                             applied_at=applied_at)
+            add_applied(state.name, vid, {"at": applied_at})
+            if applied_at.startswith(getattr(state, "daily_date", "")):
+                state.daily_sent = int(getattr(state, "daily_sent", 0) or 0) + 1
+            recovered += 1
+
+        unresolved = len(rows) - recovered
+        state._apply_reconciled_run_id = run_id
+        if recovered:
+            self._add_log(state.short, state.color,
+                          f"Crash-recovery: confirmed {recovered} application(s) in HH", "success")
+        if unresolved:
+            self._add_log(state.short, state.color,
+                          f"Crash-recovery: {unresolved} ambiguous application(s) remain blocked", "warning")
+        return {"checked": len(rows), "recovered": recovered, "unresolved": unresolved}
+
     def _run_account_worker(self, idx: int, state: AccountState) -> None:
         """Thread worker for an account — auto-restarts on crash"""
         while not self._stop_event.is_set() and not getattr(state, '_deleted', False):
@@ -1369,6 +1512,9 @@ class BotManager:
 
     def _run_account_worker_inner(self, idx: int, state: AccountState) -> None:
         acc = state.acc
+
+        # Read-only crash reconciliation runs before any new outbound apply.
+        self._reconcile_interrupted_applications(state)
 
         if not CONFIG.search_only_mode and not state._active_search_forced:
             try:
@@ -1952,6 +2098,21 @@ class BotManager:
                 continue
 
             # === ОТПРАВКА ОТКЛИКОВ (ПАКЕТАМИ) ===
+            # Read-only sync with HH immediately before live sends. This catches
+            # applications made manually or by another device/process. When a
+            # quota is configured, inability to read the authoritative counter is
+            # fail-closed: skip this cycle instead of guessing and oversending.
+            quota_sync = self._sync_hh_apply_count(state, force=True)
+            if not quota_sync and (CONFIG.daily_apply_limit > 0 or CONFIG.hh_daily_limit > 0):
+                state.status = "waiting"
+                state.status_detail = "Safety: HH daily counter unavailable; no applications sent"
+                self._add_log(state.short, state.color,
+                              "SAFETY: cannot verify HH daily counter; apply cycle skipped",
+                              "warning")
+                if self._stop_event.wait(min(max(int(CONFIG.pause_between_cycles), 1), 60)):
+                    return
+                continue
+
             state.status = "applying"
             state.status_detail = f"0/{state.total_vacancies}"
 
@@ -2112,44 +2273,42 @@ class BotManager:
                     self._add_log(state.short, state.color, "🔎 Только поиск: отправка батча заблокирована", "info")
                     break
 
-                # Персональное сопроводительное через DeepSeek. Работаем с копией account.
-                apply_acc = acc
-                if CONFIG.llm_generate_cover_letter and batch:
-                    vid_for_letter = batch[0]
-                    meta_for_letter = state.vacancy_meta.get(vid_for_letter, {}) or {}
-                    try:
-                        det = fetch_vacancy_details(acc, vid_for_letter) or {}
-                        if det:
-                            meta_for_letter.update({
-                                "key_skills": det.get("key_skills") or meta_for_letter.get("key_skills") or [],
-                                "description": det.get("description") or meta_for_letter.get("description") or "",
-                                "response_letter_required": det.get("response_letter_required"),
-                            })
-                        resume_text = ""
-                        if CONFIG.llm_use_resume:
-                            resume_data = get_client(acc).fetch_resume()
-                            if isinstance(resume_data, dict):
-                                resume_text = resume_data.get("text", "") if "text" in resume_data else json.dumps(resume_data, ensure_ascii=False)
-                            else:
-                                resume_text = str(resume_data or "")
-                        generated_letter = generate_llm_cover_letter(
-                            vacancy_title=meta_for_letter.get("title", ""),
-                            company=meta_for_letter.get("company", ""),
-                            vacancy_description=meta_for_letter.get("description", ""),
-                            key_skills=meta_for_letter.get("key_skills") or [],
-                            resume_text=resume_text,
-                            account_key=f"cover:{state.short}:{vid_for_letter}",
-                            max_length=meta_for_letter.get("letter_max_length"),
-                        )
-                        if generated_letter:
-                            apply_acc = dict(acc)
-                            apply_acc["letter"] = generated_letter
-                            self._add_log(state.short, state.color, f"✍️ DeepSeek-письмо {vid_for_letter}: {len(generated_letter)} симв.", "info")
-                        else:
-                            self._add_log(state.short, state.color, f"⚠️ DeepSeek не дал письмо для {vid_for_letter}, использую шаблон", "warning")
-                    except Exception as e:
-                        log_debug(f"cover-letter [{state.short}] {vid_for_letter}: {e}")
-                        self._add_log(state.short, state.color, f"⚠️ Ошибка DeepSeek-письма {vid_for_letter}, использую шаблон", "warning")
+                # Central hard guard + two-phase reservation immediately before network I/O.
+                reserved_batch = []
+                resume_id = str(acc.get("resume_hash", "") or "")
+                hard_block = None
+                for vid in batch:
+                    decision = reserve_apply(
+                        acc.get("name", state.name), vid, resume_id,
+                        state=state, source="worker",
+                    )
+                    if decision.allowed:
+                        reserved_batch.append(vid)
+                        continue
+                    if decision.code == "already":
+                        state.already_applied += 1
+                        self._add_response(state, vid, "", "", "already")
+                        continue
+                    if decision.code in {"search_only", "daily_limit", "hh_limit", "run_limit"}:
+                        hard_block = decision
+                        break
+                    self._add_log(state.short, state.color,
+                                  f"SAFETY {vid}: {decision.message}", "warning")
+                batch = reserved_batch
+                stop_after_batch = hard_block
+                if not batch:
+                    if hard_block is not None:
+                        state.hard_stopped = hard_block.code != "search_only"
+                        state.paused = True
+                        state.paused_reason = "search_only" if hard_block.code == "search_only" else hard_block.code
+                        state.status = "search_only" if hard_block.code == "search_only" else "limit"
+                        state.status_detail = hard_block.message
+                        self._add_log(state.short, state.color, f"SAFETY {hard_block.message}", "warning")
+                        break
+                    i += batch_size
+                    continue
+
+                apply_accounts = self._prepare_apply_accounts(state, acc, batch)
 
                 if state.use_oauth or CONFIG.use_oauth_apply or state.degraded_mode:
                     results = []
@@ -2157,31 +2316,37 @@ class BotManager:
                         if state.paused or getattr(state, "_deleted", False):
                             break
                         try:
-                            result = _oauth_apply(apply_acc, vid, apply_acc.get("letter", ""))
+                            send_acc = apply_accounts.get(str(vid), acc)
+                            result = _oauth_apply(send_acc, vid, send_acc.get("letter", ""))
                             results.append(result)
                         except Exception as e:
                             results.append(e)
                         if CONFIG.response_delay > 0:
                             time.sleep(CONFIG.response_delay)
                 else:
-                    client = get_client(apply_acc)
                     def _make_send_batch(b):
                         async def send_batch():
-                            tasks = [client.submit_response(vid,
-                                        letter_max_length=state.vacancy_meta.get(vid, {}).get("letter_max_length"))
-                                     for vid in b]
+                            tasks = [
+                                get_client(apply_accounts.get(str(vid), acc)).submit_response(
+                                    vid,
+                                    letter_max_length=state.vacancy_meta.get(vid, {}).get("letter_max_length"),
+                                )
+                                for vid in b
+                            ]
                             return await asyncio.gather(*tasks, return_exceptions=True)
                         return send_batch
                     results = asyncio.run(_make_send_batch(batch)())
 
+                # OAuth sequential mode may stop after reservations but before all sends.
+                # Release reservations that provably never reached network I/O.
+                if len(results) < len(batch):
+                    for unsent_vid in batch[len(results):]:
+                        mark_application(acc.get("name", state.name), unsent_vid, resume_id,
+                                         status="released", detail="send loop stopped before network call")
+
                 for j, (vid, result_data) in enumerate(zip(batch, results)):
-                    # Если auto-pause сработал на предыдущей итерации —
-                    # не продолжаем отправлять оставшиеся вакансии (swarm-12 #10).
-                    if state.paused or state.hard_stopped or getattr(state, "_deleted", False):
-                        break
-                    # Любая итерация — это попытка отклика. Запоминаем время,
-                    # чтобы UI мог показать «бот живой, последний раз пробовал
-                    # 30с назад» даже когда удачных откликов давно не было.
+                    # Network I/O for this result has already happened. Always finalize it,
+                    # even if another result in the same batch triggered pause/limit.
                     state.last_apply_attempt_at = datetime.now().isoformat(timespec="seconds")
                     if isinstance(result_data, Exception):
                         state.errors += 1
@@ -2190,22 +2355,21 @@ class BotManager:
                         self._add_log(state.short, state.color, f"❌ {vid}: {err_msg}", "error")
                         self._add_acc_event(state, "❌", "error", vid, "", err_msg)
                         self._check_auto_pause(state)
+                        finalize_apply(acc.get("name", state.name), vid, resume_id, "error",
+                                       {"exception": err_msg, "transient": True}, state=state)
                         continue
 
                     result, info = result_data
 
                     if result == "sent":
-                        state.sent += 1
-                        # Daily counter
                         self._maybe_roll_daily_counter(state)
-                        state.daily_sent += 1
-                        state.consecutive_errors = 0  # сброс счётчика ошибок
+                        state.consecutive_errors = 0
                         state.last_apply_at = datetime.now().isoformat(timespec="seconds")
-                        # Дополняем info мета-данными из поиска если API не вернул title
                         if not info.get("title"):
                             meta_fb = state.vacancy_meta.get(vid, {})
                             info = {**meta_fb, **info}
-                        add_applied(acc["name"], vid, info)
+                        finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                       "sent", info, state=state)
 
                         # Collect HR contact if available
                         contact = info.get("contact", {})
@@ -2248,6 +2412,8 @@ class BotManager:
                         title = info.get("title", "")
                         company = info.get("company", "")
                         display_title = title[:40] if title else vid
+                        finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                       "test", info, state=None)
 
                         if not (state.apply_tests or CONFIG.auto_apply_tests):
                             # Откликаться на тесты выключено — пропускаем
@@ -2262,28 +2428,36 @@ class BotManager:
                                                 title or vid, company, "пропущено")
                         else:
                             # Пробуем автозаполнить опрос
+                            q_decision = reserve_apply(
+                                acc.get("name", state.name), vid, resume_id,
+                                state=state, source="questionnaire",
+                            )
+                            if not q_decision.allowed:
+                                self._add_log(state.short, state.color,
+                                              f"SAFETY questionnaire {vid}: {q_decision.message}", "warning")
+                                state.tests += 1
+                                continue
                             q_result, q_info = asyncio.run(get_client(acc).fill_questionnaire(
                                 vid, vacancy_title=title, company=company))
                             if q_result == "sent":
-                                state.sent += 1
-                                state.questionnaire_sent += 1
                                 state.consecutive_errors = 0
-                                # Daily counter
                                 self._maybe_roll_daily_counter(state)
-                                state.daily_sent += 1
                                 state.current_vacancy_title = title
                                 state.current_vacancy_company = company
                                 self._push_action(state, f"\U0001f4dd {display_title[:25]}")
                                 self._add_response(state, vid, title, company, "sent")
                                 self._add_log(state.short, state.color,
                                               f"\U0001f4dd Опрос пройден: {display_title}", "success")
-                                q_info_full = {**state.vacancy_meta.get(vid, {}), **info}
-                                add_applied(acc["name"], vid, q_info_full)
+                                q_info_full = {**state.vacancy_meta.get(vid, {}), **info, **(q_info or {})}
+                                finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                               "sent", q_info_full, state=state, questionnaire=True)
                                 answer_preview = questionnaire_default_answer()[:50]
                                 self._add_acc_event(state, "\U0001f4dd", "questionnaire",
                                                     title or vid, company,
                                                     f"Ответ: {answer_preview}")
                             elif q_result == "limit":
+                                finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                               "limit", q_info or {}, state=None)
                                 state.limit_exceeded = True
                                 state.limit_reset_time = datetime.now() + timedelta(
                                     minutes=CONFIG.limit_check_interval
@@ -2293,8 +2467,10 @@ class BotManager:
                                 self._add_log(state.short, state.color,
                                               f"\U0001f6ab ЛИМИТ при опросе! Повторная попытка в {state.limit_reset_time.strftime('%H:%M')}",
                                               "error")
-                                break
+                                continue
                             elif q_result == "auth_error":
+                                finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                               "auth_error", q_info or {}, state=None)
                                 log_debug(f"AUTH_ERROR [{state.short}] vid={vid} flow=questionnaire")
                                 state.cookies_expired = True
                                 state.paused = True
@@ -2303,8 +2479,10 @@ class BotManager:
                                     "⚠️ Куки протухли! Обновите куки и снимите паузу.", "error",
                                 )
                                 self._add_acc_event(state, "⚠️", "error", "Авторизация", "", "Обновите куки")
-                                break
+                                continue
                             else:
+                                finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                               "error", q_info or {}, state=None)
                                 # Не удалось — считаем неудачи
                                 state._test_failures[vid] = state._test_failures.get(vid, 0) + 1
                                 if state._test_failures[vid] >= 2:
@@ -2322,11 +2500,14 @@ class BotManager:
                     elif result == "already":
                         state.already_applied += 1
                         already_info = state.vacancy_meta.get(vid, {})
-                        add_applied(acc["name"], vid, already_info if already_info else None)
+                        finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                       "already", already_info, state=None)
                         self._push_action(state, f"\U0001f504 {vid}")
                         self._add_response(state, vid, "", "", "already")
 
                     elif result == "limit":
+                        finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                       "limit", info or {}, state=None)
                         log_debug(f"HH_LIMIT [{state.short}] vid={vid} retry_after={info.get('retry_after_seconds', '?')}")
                         state.limit_exceeded = True
                         if CONFIG.stop_on_hh_limit:
@@ -2355,9 +2536,11 @@ class BotManager:
                                 f"\U0001f6ab ЛИМИТ! Повторная попытка в {state.limit_reset_time.strftime('%H:%M')}",
                                 "error",
                             )
-                        break
+                        continue
 
                     elif result == "auth_error":
+                        finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                       "auth_error", info or {}, state=None)
                         oauth_capable = (
                             state.use_oauth
                             or CONFIG.use_oauth_apply
@@ -2377,7 +2560,7 @@ class BotManager:
                             state.cookies_expired = True
                             # Прервать текущий батч cookie-applies, не пытаемся снова
                             # тем же путём в этом цикле.
-                            break
+                            continue
                         else:
                             log_debug(f"AUTH_ERROR [{state.short}] vid={vid} flow=apply")
                             state.cookies_expired = True
@@ -2387,7 +2570,7 @@ class BotManager:
                                 "⚠️ Куки протухли! Обновите куки и снимите паузу.", "error",
                             )
                             self._add_acc_event(state, "⚠️", "error", "Авторизация", "", "Обновите куки")
-                            break
+                            continue
 
                     elif result == "error":
                         state.errors += 1
@@ -2402,11 +2585,23 @@ class BotManager:
                         # батче не бракуются `if state.paused: break` циклом ниже.
                         transient = 'error_code' in (info or {}) and (info or {}).get('error_code') == 'unknown'
                         transient = transient or 'unknown' in raw.lower()[:40]
+                        final_info = {**(info or {}), "transient": transient}
+                        finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                       "error", final_info, state=None)
                         if not transient:
                             state.consecutive_errors += 1
                         self._add_log(state.short, state.color, f"❌ {vid}: {debug_info}", "error")
                         self._add_acc_event(state, "❌", "error", vid, "", debug_info[:60])
                         self._check_auto_pause(state)
+
+                if stop_after_batch is not None:
+                    state.hard_stopped = stop_after_batch.code != "search_only"
+                    state.paused = True
+                    state.paused_reason = "search_only" if stop_after_batch.code == "search_only" else stop_after_batch.code
+                    state.status = "search_only" if stop_after_batch.code == "search_only" else "limit"
+                    state.status_detail = stop_after_batch.message
+                    self._add_log(state.short, state.color, f"SAFETY {stop_after_batch.message}", "warning")
+                    break
 
                 if state.limit_exceeded:
                     break

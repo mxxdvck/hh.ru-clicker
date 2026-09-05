@@ -91,6 +91,7 @@ class Config:
     # legacy polling loop продолжает работать. Включать per-account через /api/ws/{idx}/enable.
     use_websocket_realtime: bool = False
     daily_apply_limit: int = 20  # Жёсткий лимит откликов в день (0 = без ограничения)
+    run_apply_limit: int = 20  # Жёсткий лимит успешных откликов за один запуск аккаунта (0 = без лимита)
     search_only_mode: bool = True  # Только собирать/фильтровать вакансии, физически не отправлять отклики
     merge_saved_searches: bool = False  # Подмешивать сохранённые поиски HH к явному пулу URL
     auto_resume_search_enabled: bool = False  # Автоматически добавлять широкий поиск по выбранному резюме
@@ -108,7 +109,7 @@ class Config:
     llm_enabled: bool = False
     llm_auto_send: bool = False       # True = отправлять, False = только логировать черновик
     llm_use_cover_letter: bool = True  # Передавать сопроводительное письмо в контекст
-    llm_generate_cover_letter: bool = False  # DeepSeek генерирует письмо под каждую вакансию перед откликом
+    llm_generate_cover_letter: bool = False  # LLM генерирует письмо под каждую вакансию перед откликом
     llm_use_resume: bool = True        # Включать текст резюме в системный промпт
     # HH сам генерит quick_replies под каждое HR-сообщение — пробуем сначала их,
     # только на пустой ответ идём в свой LLM (экономит токены + официально-выглядящий текст).
@@ -183,25 +184,35 @@ class Config:
     hh_region: str = ""
 
     # Шаблоны сопроводительных писем (list of {name: str, text: str})
+    # Шаблоны сопроводительных писем. Публичный дефолт без личных данных.
     letter_templates: list = [
         {
             "name": "Стандартное",
             "text": (
                 "Здравствуйте!\n\n"
-                "Я выражаю искренний интерес к возможности присоединиться к вашей компании.\n\n"
-                "Я ознакомился с деятельностью вашей организации и уверен, что мой опыт и навыки "
-                "смогут внести вклад в вашу команду.\n\n"
-                "Хочу отметить, что я всегда готов обучаться новому и развиваться в профессиональном плане.\n\n"
-                "Считаю, что ваша компания предоставляет отличные возможности для роста и "
-                "самосовершенствования, и мне бы хотелось стать частью вашей команды.\n\n"
-                "С уважением,\n[ИМЯ]\n[t.me: @username]\n[📞 телефон]"
+                "Заинтересовала ваша вакансия. Хотелось бы подробнее обсудить задачи, требования и возможное сотрудничество.\n\n"
+                "Спасибо за рассмотрение отклика."
             ),
         }
     ]
 
 
+
 CONFIG = Config()
 CONFIG.llm_profiles = []
+
+
+def resolve_letter_text(acc: dict) -> str:
+    """Return the account letter or the first configured non-empty template."""
+    direct = str((acc or {}).get("letter") or "").strip()
+    if direct:
+        return direct
+    for template in (getattr(CONFIG, "letter_templates", None) or []):
+        if isinstance(template, dict):
+            text = str(template.get("text") or "").strip()
+            if text:
+                return text
+    return ""
 
 _BUILTIN_QUESTIONNAIRE_DEFAULT_ANSWER = Config.questionnaire_default_answer
 
@@ -265,7 +276,7 @@ _CONFIG_KEYS = [
     "pages_per_url", "max_concurrent", "response_delay", "pause_between_cycles",
     "limit_check_interval", "resume_touch_interval", "batch_responses", "min_salary",
     "auto_pause_errors", "questionnaire_default_answer", "llm_fill_questionnaire",
-    "skip_inconsistent", "use_oauth_apply", "auto_pick_resume", "default_client_mode", "daily_apply_limit", "search_only_mode", "merge_saved_searches", "auto_resume_search_enabled", "merge_favorited_vacancies", "stop_on_hh_limit", "llm_check_interval",
+    "skip_inconsistent", "use_oauth_apply", "auto_pick_resume", "default_client_mode", "daily_apply_limit", "run_apply_limit", "search_only_mode", "merge_saved_searches", "auto_resume_search_enabled", "merge_favorited_vacancies", "stop_on_hh_limit", "llm_check_interval",
     "filter_agencies", "filter_low_competition", "search_period_days",
     "min_employer_rating", "min_employer_reviews", "min_recommendations_percent",
     "skip_auto_response_vacancies", "prefer_quick_responses", "accredited_it_only",
@@ -409,6 +420,10 @@ def load_config():
                     setattr(CONFIG, k, _coerce_config_value(k, data[k]))
                 except (ValueError, TypeError):
                     log_debug(f"⚠️ Невалидное значение конфига {k}={data[k]!r}, пропуск")
+        # Backward-compatible migration: old configs had only a daily cap.
+        # Mirror it into the per-process cap so existing setups keep their intent.
+        if "run_apply_limit" not in data:
+            CONFIG.run_apply_limit = max(int(CONFIG.daily_apply_limit or 0), 0)
         if "questionnaire_templates" in data and isinstance(data["questionnaire_templates"], list):
             CONFIG.questionnaire_templates = data["questionnaire_templates"]
         if "letter_templates" in data and isinstance(data["letter_templates"], list):

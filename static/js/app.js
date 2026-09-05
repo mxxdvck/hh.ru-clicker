@@ -1393,6 +1393,8 @@ function syncScheduleSettings(snap) {
   if (oa && cfg.use_oauth_apply !== undefined) oa.checked = cfg.use_oauth_apply;
   const dal = document.getElementById('daily-apply-limit');
   if (dal && cfg.daily_apply_limit !== undefined) dal.value = cfg.daily_apply_limit;
+  const ral = document.getElementById('run-apply-limit');
+  if (ral && cfg.run_apply_limit !== undefined) ral.value = cfg.run_apply_limit;
   const som = document.getElementById('search-only-mode');
   if (som && cfg.search_only_mode !== undefined) som.checked = cfg.search_only_mode;
   const sohl = document.getElementById('stop-on-hh-limit');

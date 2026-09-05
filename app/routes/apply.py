@@ -10,8 +10,7 @@ from fastapi import APIRouter
 from glom import glom
 
 from app.logging_utils import _is_login_page
-from app.config import hh_base
-from app.storage import add_applied
+from app.config import CONFIG, hh_base, resolve_letter_text
 from app.hh_api import get_headers
 from app.hh_client_factory import get_client
 from app.hh_client_fallback import FallbackHHClient
@@ -20,6 +19,7 @@ from app.instances import bot
 from app.user_agent import webview_user_agent
 from app.hh_apply import _aio_egress_kwargs
 from app.mobile_questionnaire import oauth_web_account
+from app.apply_safety import reserve_apply, finalize_apply
 
 
 router = APIRouter()
@@ -118,35 +118,24 @@ def _result_to_response(result: str, info: dict, vid: str,
 
 
 async def _mobile_submit_response(acc_idx: int, acc: dict, vid: str, client) -> dict:
-    """
-    Отклик БЕЗ анкеты через HHClient-фабрику (mobile-ветка /api/apply/submit).
-
-    client.submit_response() — async-метод, поэтому await'ится НАПРЯМУЮ:
-    run_in_executor неприменим к корутинам (осознанное отклонение от паттерна
-    routes/debug.py, где sync-методы клиента гоняются в executor'е).
-
-    Bookkeeping повторяет success-ветку web-flow, КРОМЕ state.questionnaire_sent
-    (анкеты не было). result="test" → добираем вопросы существующим
-    _fetch_questionnaire_data, чтобы UI перезапустил check/submit с ответами.
-    """
+    """Send one already-reserved mobile application and finalize its ledger entry."""
     result, info = await client.submit_response(vid)
+    info = info or {}
+    state = bot._get_apply_state(acc_idx)
+    resume_id = str(acc.get("resume_hash", "") or "")
+    finalize_apply(acc.get("name", ""), vid, resume_id, result, info, state=state)
 
     if result == "sent":
-        state = bot._get_apply_state(acc_idx)
-        if state:
-            state.sent += 1
-            # state.questionnaire_sent НЕ инкрементируем — анкеты не было
-        add_applied(acc["name"], vid)
         short = state.short if state else acc.get("name", "?")
         color = state.color if state else ""
-        bot._add_log(short, color, f"\U0001f4dd Ручной отклик (mobile): {vid}", "success")
+        bot._add_log(short, color, f"\U0001f4dd \u0420\u0443\u0447\u043d\u043e\u0439 \u043e\u0442\u043a\u043b\u0438\u043a (mobile): {vid}", "success")
 
     questions = None
     if result == "test":
         qdata = await _fetch_questionnaire_data(await _web_acc_for_form(acc), vid)
         questions = qdata["questions"]
 
-    return _result_to_response(result, info, vid, questions=questions, letter=acc["letter"])
+    return _result_to_response(result, info, vid, questions=questions, letter=acc.get("letter", ""))
 
 
 @router.post("/api/apply/check")
@@ -172,10 +161,22 @@ async def api_apply_check(body: dict):
     if custom_letter:
         acc["letter"] = custom_letter
 
+    if not acc.get("letter"):
+        acc["letter"] = resolve_letter_text(acc)
+
     try:
         acc = await _web_acc_for_form(acc)
     except Exception as exc:
         return {"status": "error", "vacancy_id": vid, "message": f"OAuth autologin: {exc}"}
+
+    state = bot._get_apply_state(acc_idx)
+    resume_id = str(acc.get("resume_hash", "") or "")
+    decision = reserve_apply(acc.get("name", ""), vid, resume_id,
+                             state=state, source="manual_check")
+    if not decision.allowed:
+        status = "already" if decision.code == "already" else "blocked"
+        return {"status": status, "vacancy_id": vid, "reason": decision.code,
+                "message": decision.message}
 
     sess_kw, req_kw = _aio_egress_kwargs()
     try:
@@ -188,6 +189,11 @@ async def api_apply_check(body: dict):
             for k, v in [("resume_hash", acc["resume_hash"]), ("vacancy_id", vid),
                          ("letter", acc["letter"]), ("lux", "true"), ("ignore_postponed", "true")]:
                 data.add_field(k, v)
+            if CONFIG.search_only_mode:
+                finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                               {"error_type": "search_only", "raw": "manual_check runtime search-only guard"}, state=None)
+                return {"status": "blocked", "vacancy_id": vid, "reason": "search_only",
+                        "message": "Search-only mode: application sending is disabled"}
             async with session.post(
                 hh_base() + "/applicant/vacancy_response/popup",
                 data=data, timeout=aiohttp.ClientTimeout(total=10), **req_kw
@@ -196,6 +202,7 @@ async def api_apply_check(body: dict):
                 status_code = r.status
 
         if status_code in (401, 403) or (status_code == 200 and _is_login_page(txt)):
+            finalize_apply(acc.get("name", ""), vid, resume_id, "auth_error", {}, state=None)
             return {"status": "error", "vacancy_id": vid, "message": "⚠️ Куки протухли — обновите в настройках"}
 
         if status_code == 200:
@@ -209,16 +216,20 @@ async def api_apply_check(body: dict):
                     }
                 except Exception:
                     pass
+            finalize_apply(acc.get("name", ""), vid, resume_id, "sent", info, state=state)
             return {"status": "sent", "vacancy_id": vid, **info,
                     "message": "Отклик уже отправлен (без опроса)"}
 
         if "negotiations-limit-exceeded" in txt:
+            finalize_apply(acc.get("name", ""), vid, resume_id, "limit", {}, state=None)
             return {"status": "limit", "vacancy_id": vid, "message": "Достигнут дневной лимит откликов"}
 
         if "alreadyApplied" in txt:
+            finalize_apply(acc.get("name", ""), vid, resume_id, "already", {}, state=None)
             return {"status": "already", "vacancy_id": vid, "message": "Отклик на эту вакансию уже был отправлен"}
 
         if "test-required" in txt:
+            finalize_apply(acc.get("name", ""), vid, resume_id, "test", {}, state=None)
             qdata = await _fetch_questionnaire_data(acc, vid)
             return {
                 "status": "test_required",
@@ -228,9 +239,13 @@ async def api_apply_check(body: dict):
                 "message": f"Вакансия требует опрос ({len(qdata['questions'])} вопросов)",
             }
 
+        finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                       {"raw": f"HTTP {status_code}: {txt[:100]}"}, state=None)
         return {"status": "error", "vacancy_id": vid, "message": f"HTTP {status_code}: {txt[:100]}"}
 
     except Exception as e:
+        finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                       {"exception": str(e), "transient": True}, state=None)
         return {"status": "error", "message": str(e)}
 
 
@@ -253,6 +268,9 @@ async def api_apply_submit(body: dict):
     if letter:
         acc = {**acc, "letter": letter}
 
+    if not acc.get("letter"):
+        acc = {**acc, "letter": resolve_letter_text(acc)}
+
     # Phase 3: mobile-ветка — отклик БЕЗ анкеты через HHClient-фабрику.
     # Маркер mobile-режима: isinstance(client, FallbackHHClient) — фабрика
     # возвращает её только при mode="mobile" (выбрано перед
@@ -260,18 +278,31 @@ async def api_apply_submit(body: dict):
     # Если user_answers непустой (анкета) или режим web — НИЧЕГО не меняется:
     # анкеты — территория web-flow (официальное приложение тоже ходит в них
     # через webview), поэтому web-form flow ниже сохраняется байт-в-байт.
+    state = bot._get_apply_state(acc_idx)
+    resume_id = str(acc.get("resume_hash", "") or "")
+    decision = reserve_apply(acc.get("name", ""), vid, resume_id,
+                             state=state, source="manual_submit")
+    if not decision.allowed:
+        status = "already" if decision.code == "already" else "blocked"
+        return {"status": status, "vacancy_id": vid, "reason": decision.code,
+                "message": decision.message}
+
     client = get_client(acc)
     native_oauth = str(acc.get("mode", "")).strip().lower() == "oauth"
     if (isinstance(client, FallbackHHClient) or native_oauth) and not user_answers:
         try:
             return await _mobile_submit_response(acc_idx, acc, vid, client)
         except Exception as e:
+            finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                           {"exception": str(e), "transient": True}, state=None)
             return {"status": "error", "message": str(e)}
 
     if native_oauth:
         try:
             acc = await _web_acc_for_form(acc)
         except Exception as exc:
+            finalize_apply(acc.get("name", ""), vid, resume_id, "auth_error",
+                           {"exception": str(exc)}, state=None)
             return {"status": "error", "message": f"OAuth autologin: {exc}"}
 
     url_form = f"{hh_base()}/applicant/vacancy_response?vacancyId={vid}&withoutTest=no"
@@ -287,6 +318,7 @@ async def api_apply_submit(body: dict):
             async with session.get(url_form, timeout=aiohttp.ClientTimeout(total=15), **req_kw) as r:
                 html = await r.text()
                 if r.status in (401, 403) or _is_login_page(html):
+                    finalize_apply(acc.get("name", ""), vid, resume_id, "auth_error", {}, state=None)
                     return {"status": "error", "message": "⚠️ Куки протухли — обновите в настройках"}
 
             hidden = dict(re.findall(r'<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"', html))
@@ -309,6 +341,11 @@ async def api_apply_submit(body: dict):
                 else:
                     form.add_field(name, str(value))
 
+            if CONFIG.search_only_mode:
+                finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                               {"error_type": "search_only", "raw": "manual_submit runtime search-only guard"}, state=None)
+                return {"status": "blocked", "vacancy_id": vid, "reason": "search_only",
+                        "message": "Search-only mode: application sending is disabled"}
             async with session.post(
                 url_form,
                 headers={"X-Xsrftoken": acc.get("cookies", {}).get("_xsrf", ""), "Referer": url_form},
@@ -322,20 +359,25 @@ async def api_apply_submit(body: dict):
 
         if status in (302, 303):
             if "negotiations-limit-exceeded" in location:
+                finalize_apply(acc.get("name", ""), vid, resume_id, "limit", {}, state=None)
                 return {"status": "limit", "message": "Достигнут лимит откликов"}
             if "withoutTest=no" in location or f"vacancyId={vid}" in location:
+                finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                               {"raw": "questionnaire form rejected"}, state=None)
                 return {"status": "error", "message": "Форма не принята — возможно не все вопросы заполнены"}
             state = bot._get_apply_state(acc_idx)
-            if state:
-                state.sent += 1
-                state.questionnaire_sent += 1
-            add_applied(acc["name"], vid)
+            finalize_apply(acc.get("name", ""), vid, resume_id, "sent", {},
+                           state=state, questionnaire=True)
             short = state.short if state else acc.get("name", "?")
             color = state.color if state else ""
             bot._add_log(short, color, f"\U0001f4dd Ручной отклик (опрос): {vid}", "success")
             return {"status": "sent", "message": "Отклик успешно отправлен ✅"}
 
+        finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                       {"raw": f"HTTP {status}", "transient": status >= 500}, state=None)
         return {"status": "error", "message": f"HTTP {status}"}
 
     except Exception as e:
+        finalize_apply(acc.get("name", ""), vid, resume_id, "error",
+                       {"exception": str(e), "transient": True}, state=None)
         return {"status": "error", "message": str(e)}

@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 
 import app.routes.apply as apply_route
+from app import apply_safety
 from app.instances import bot
 
 
@@ -96,7 +97,7 @@ def test_submit_encodes_checkbox_as_repeated_fields(monkeypatch):
     monkeypatch.setattr(bot, "_get_apply_acc", lambda idx: dict(acc))
     monkeypatch.setattr(bot, "_get_apply_state", lambda idx: None)
     monkeypatch.setattr(bot, "_add_log", lambda *args, **kwargs: None)
-    monkeypatch.setattr(apply_route, "add_applied", lambda *args, **kwargs: None)
+    monkeypatch.setattr(apply_safety.storage, "add_applied", lambda *args, **kwargs: None)
     monkeypatch.setattr(apply_route, "get_client", lambda account: object())
 
     result = asyncio.run(apply_route.api_apply_submit({

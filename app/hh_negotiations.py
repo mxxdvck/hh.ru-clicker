@@ -31,6 +31,7 @@ def fetch_hh_negotiations_stats(acc: dict, max_pages: int = 20) -> dict:
         "discard": 0,
         "interviews_list": [],
         "neg_ids": [],
+        "vacancy_ids": [],
         "discard_neg_ids": [],  # chatId DISCARD-переговоров — LLM их пропускает без вызова API
         "auth_error": False,
         "unread_by_employer": 0,  # count of negotiations where employer hasn't read our messages
@@ -150,6 +151,10 @@ def fetch_hh_negotiations_stats(acc: dict, max_pages: int = 20) -> dict:
             body = resp.text
             if _is_login_page(body):
                 break
+
+            for _vid in re.findall(r'"vacancyId"\s*:\s*"?(\d+)"?', body):
+                if _vid not in result["vacancy_ids"]:
+                    result["vacancy_ids"].append(_vid)
 
             # On first page, extract SSR data for conversationUnreadByEmployerCount
             if page == 0:

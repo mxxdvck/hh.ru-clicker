@@ -97,3 +97,10 @@ def test_priority_test_required_beats_success_marker():
     body = '{"test-required": true, "success":true}'
     result, _ = classify_apply_response(200, body)
     assert result == "test"
+
+
+def test_400_letter_required_is_specific_error():
+    body = json.dumps({"description": "Letter required", "bad_argument": "message"})
+    result, info = classify_apply_response(400, body)
+    assert result == "error"
+    assert info["error_type"] == "letter_required"

@@ -11,7 +11,7 @@ import aiohttp
 from glom import glom
 
 from app.logging_utils import log_debug, _is_login_page
-from app.config import CONFIG, hh_base
+from app.config import CONFIG, hh_base, resolve_letter_text
 from app.hh_http import HH
 # Egress-helpers aiohttp переехали в app/hh_http.py (единая точка egress);
 # реэкспорт для совместимости — routes/apply.py и тесты импортируют отсюда.
@@ -24,6 +24,7 @@ from app.llm import _randomize_text, generate_llm_questionnaire_answers, get_llm
 from app.hh_resume import fetch_resume_text
 
 _HH_DEFAULT_TIMEOUT = 15
+
 
 
 def _parse_retry_after(value: str) -> int | None:
@@ -111,6 +112,11 @@ def classify_apply_response(status_code: int, txt: str) -> tuple:
         # success-маркером в нестандартных ответах, и приоритет должен быть у отказа.
 
         # top-level "error":"..." (HTTP 400 формат)
+        description = str(parsed.get("description") or "").lower()
+        bad_argument = str(parsed.get("bad_argument") or "").lower()
+        if "letter required" in description or (bad_argument == "message" and "letter" in description):
+            return "error", {"raw": txt[:300], **info, "error_type": "letter_required"}
+
         top_error = parsed.get("error")
         if top_error:
             ts = str(top_error).lower()
@@ -253,12 +259,15 @@ async def send_response_async(acc: dict, vid: str, letter_max_length: int | None
     """
     log_debug(f"📤 ОТПРАВКА ОТКЛИКА на вакансию {vid} | Аккаунт: {acc['name']}")
 
+    if CONFIG.search_only_mode:
+        return "error", {"error_type": "search_only", "raw": "application sending disabled by search_only_mode"}
+
     xsrf = acc.get("cookies", {}).get("_xsrf", "")
     if not xsrf:
         return "error", {"exception": "Missing _xsrf token"}
     headers = get_headers(xsrf)
 
-    letter = _randomize_text(acc.get("letter", ""))
+    letter = _randomize_text(resolve_letter_text(acc))
     try:
         if getattr(CONFIG, "hh_ai_letter_first_try", True):
             ai_letter = await generate_hh_ai_letter(acc, acc.get("resume_hash", ""), vid)
@@ -283,6 +292,8 @@ async def send_response_async(acc: dict, vid: str, letter_max_length: int | None
         # http(s) → proxy= на запрос (см. _aio_egress_kwargs).
         sess_kw, req_kw = _aio_egress_kwargs()
         async with aiohttp.ClientSession(headers=headers, cookies=acc["cookies"], **sess_kw) as session:
+            if CONFIG.search_only_mode:
+                return "error", {"error_type": "search_only", "raw": "application sending disabled by search_only_mode"}
             async with session.post(
                 hh_base() + "/applicant/vacancy_response/popup",
                 data=data,
@@ -310,6 +321,9 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
     Поддерживает textarea, radio, checkbox.
     Возвращает (result, info): result = sent | limit | test | error
     """
+    if CONFIG.search_only_mode:
+        return "error", {"error_type": "search_only", "raw": "questionnaire sending disabled by search_only_mode"}
+
     headers_get = {
         "User-Agent": webview_user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -438,7 +452,7 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
             data = aiohttp.FormData()
             data.add_field("resume_hash", acc["resume_hash"])
             data.add_field("vacancy_id", vid)
-            data.add_field("letter", _randomize_text(acc.get("letter", "")))
+            data.add_field("letter", _randomize_text(resolve_letter_text(acc)))
             data.add_field("lux", "true")
 
             for name in ("_xsrf", "uidPk", "guid", "startTime", "testRequired"):
@@ -454,6 +468,9 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                     data.add_field(name, str(value))
 
             # Шаг 3: POST
+            if CONFIG.search_only_mode:
+                return "error", {"error_type": "search_only", "raw": "questionnaire runtime guard"}
+
             async with session.post(
                 url_form,
                 headers={"X-Xsrftoken": acc.get("cookies", {}).get("_xsrf", ""), "Referer": url_form},

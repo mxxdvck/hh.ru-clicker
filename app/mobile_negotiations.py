@@ -71,12 +71,14 @@ def fetch_negotiations(acc: dict, max_pages: int = 20, per_page: int = 100) -> d
         "discard": 0,
         "interviews_list": [],
         "neg_ids": [],
+        "vacancy_ids": [],
         "discard_neg_ids": [],  # id DISCARD-переговоров — LLM их пропускает без вызова API
         "auth_error": False,
         "unread_by_employer": 0,  # число переговоров с непрочитанными HR сообщениями
     }
     cutoff = datetime.now().astimezone() - timedelta(days=_RECENT_WINDOW_DAYS)
     seen_ids: set = set()  # дедуп при битой пагинации HH
+    seen_vacancy_ids: set = set()
     found = 0
     collected = 0
 
@@ -112,6 +114,12 @@ def fetch_negotiations(acc: dict, max_pages: int = 20, per_page: int = 100) -> d
                     continue  # уже видели этот чат на предыдущей странице
                 seen_ids.add(neg_id)
                 result["neg_ids"].append(neg_id)
+
+            vacancy = item.get("vacancy") or {}
+            vacancy_id = str(vacancy.get("id") or "") if isinstance(vacancy, dict) else ""
+            if vacancy_id and vacancy_id not in seen_vacancy_ids:
+                seen_vacancy_ids.add(vacancy_id)
+                result["vacancy_ids"].append(vacancy_id)
 
             state = item.get("state")
             state_id = state.get("id") if isinstance(state, dict) else None

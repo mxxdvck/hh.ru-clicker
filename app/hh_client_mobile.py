@@ -65,6 +65,7 @@ from app.hh_client import HHClient
 from app.hh_http import egress_proxies
 from app.llm import _randomize_text
 from app.logging_utils import log_debug
+from app.config import resolve_letter_text
 
 
 class MobileHHClient(HHClient):
@@ -236,7 +237,8 @@ class MobileHHClient(HHClient):
     # ── Phase 3: отклики и vacancy-метаданные ─────────────────────────────────
 
     async def submit_response(self, vid: str, letter_max_length: int | None = None) -> tuple:
-        letter = _randomize_text(self.acc.get("letter", "")) if self.acc.get("letter") else ""
+        base_letter = resolve_letter_text(self.acc)
+        letter = _randomize_text(base_letter) if base_letter else ""
         if letter_max_length and len(letter) > letter_max_length:
             letter = letter[:letter_max_length].rstrip()
         visibility_id = self.acc.get("required_applicant_visibility_id", "")

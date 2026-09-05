@@ -27,6 +27,9 @@ class AccountState:
         self.status = "idle"
         self.status_detail = ""
 
+        from app.application_ledger import new_run_id
+        self.apply_run_id = new_run_id()
+
         self.sent = 0
         self.tests = 0
         self.errors = 0

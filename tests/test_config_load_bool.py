@@ -46,3 +46,22 @@ def test_config_snapshot_contains_search_only_mode(monkeypatch):
     monkeypatch.setattr(config.CONFIG, "search_only_mode", True)
     snap = config.config_snapshot()
     assert snap["search_only_mode"] is True
+
+
+def test_load_config_migrates_run_limit_from_daily(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"daily_apply_limit": 50}), encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_FILE", path)
+    monkeypatch.setattr(config.CONFIG, "daily_apply_limit", 20)
+    monkeypatch.setattr(config.CONFIG, "run_apply_limit", 20)
+
+    config.load_config()
+
+    assert config.CONFIG.daily_apply_limit == 50
+    assert config.CONFIG.run_apply_limit == 50
+
+
+def test_config_snapshot_contains_run_apply_limit(monkeypatch):
+    monkeypatch.setattr(config.CONFIG, "run_apply_limit", 17)
+    snap = config.config_snapshot()
+    assert snap["run_apply_limit"] == 17

@@ -18,7 +18,7 @@ URL = MOBILE_BASE + "/negotiations"
 # Ключи web-аналога fetch_hh_negotiations_stats — mobile обязан совпадать
 WEB_KEYS = {
     "interview", "recent_interview", "viewed", "not_viewed", "discard",
-    "interviews_list", "neg_ids", "discard_neg_ids", "auth_error",
+    "interviews_list", "neg_ids", "vacancy_ids", "discard_neg_ids", "auth_error",
     "unread_by_employer",
 }
 
@@ -69,6 +69,7 @@ def test_single_page_counts_and_mapping(monkeypatch):
     assert res["recent_interview"] == 1
     assert res["discard"] == 1
     assert res["neg_ids"] == ["111", "222", "333"]
+    assert res["vacancy_ids"] == ["134210190"]
     assert res["discard_neg_ids"] == ["222"]
     assert res["viewed"] == 1
     assert res["not_viewed"] == 1

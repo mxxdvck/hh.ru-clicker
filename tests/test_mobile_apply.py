@@ -9,6 +9,7 @@ import requests as _requests
 import responses
 
 from app import oauth
+from app.config import CONFIG
 from app.hh_client_mobile import MobileHHClient
 from app.hh_mobile_transport import MOBILE_BASE, MobileAPIError
 from app.mobile_apply import submit_response
@@ -256,10 +257,21 @@ def test_client_letter_max_length_truncates_message(monkeypatch):
 
 
 @responses.activate
-def test_client_no_letter_means_no_message_field(monkeypatch):
+def test_client_uses_configured_fallback_letter_when_account_letter_missing(monkeypatch):
     monkeypatch.setattr(oauth, "_obtain_oauth_token", lambda a: "t")
     responses.add(responses.POST, URL, json={"id": "9"}, status=200)
-    client = MobileHHClient(dict(ACC))  # acc без ключа "letter"
+    client = MobileHHClient(dict(ACC))
+    status, _ = _run_coro(client.submit_response("v1"))
+    assert status == "sent"
+    assert _form_of()["message"][0]
+
+
+@responses.activate
+def test_client_can_send_without_message_when_no_fallback_exists(monkeypatch):
+    monkeypatch.setattr(oauth, "_obtain_oauth_token", lambda a: "t")
+    monkeypatch.setattr(CONFIG, "letter_templates", [])
+    responses.add(responses.POST, URL, json={"id": "10"}, status=200)
+    client = MobileHHClient(dict(ACC))
     status, _ = _run_coro(client.submit_response("v1"))
     assert status == "sent"
     assert "message" not in _form_of()
