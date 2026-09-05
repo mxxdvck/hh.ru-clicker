@@ -191,6 +191,32 @@ def test_single_account_renders_login_and_counters(ui):
     expect(p.locator("#acc-resume-wrap-0")).to_have_count(0)
 
 
+def test_search_only_paused_account_shows_found_vacancy_preview(ui):
+    acc = _account(
+        idx=0,
+        status="search_only",
+        paused=True,
+        paused_reason="search_only",
+        status_detail="search completed",
+        total_vacancies=2,
+        search_preview=[
+            {"id": "101", "title": "Python Developer", "company": "Acme", "url": "https://hh.ru/vacancy/101"},
+            {"id": "102", "title": "Backend Developer", "company": "Beta", "url": "https://hh.ru/vacancy/102"},
+        ],
+    )
+    state = _state(accounts=[acc])
+    state["config"] = _base_config(search_only_mode=True)
+    _install_state(ui, state)
+    ui.open()
+    ui.push_state()
+
+    preview = ui.page.locator("#acc-search-preview-wrap-0")
+    expect(preview).to_be_visible()
+    expect(ui.page.locator("#acc-search-preview-count-0")).to_have_text("2")
+    expect(ui.page.locator("#acc-search-preview-0 a")).to_have_count(2)
+    expect(ui.page.locator("#acc-search-preview-0")).to_contain_text("Python Developer")
+    expect(ui.page.locator("#acc-search-preview-0")).to_contain_text("Backend Developer")
+
 def test_multiple_accounts_all_rendered(ui):
     """Несколько аккаунтов (4) → все карточки отрисованы в #accounts-grid."""
     accs = [_account(idx=i, name=f"acc_login_{i}") for i in range(4)]

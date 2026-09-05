@@ -3901,26 +3901,26 @@ function updateCard(card, acc) {
         badge.className = 'acc-status-badge status-collecting';
         badge.textContent = '🔎 ' + t('status_search_only');
         badge.title = acc.status_detail || 'Поиск завершён, отклики отключены';
-        return;
-      }
-      const hhUsed = acc.hh_today_applies || 0;
-      const hhLimit = acc.hh_daily_limit || 200;
-      if (acc.hard_stopped && hhUsed >= hhLimit) {
-        badge.className = 'acc-status-badge status-limit';
-        badge.textContent = `🛑 HH-лимит ${hhUsed}/${hhLimit}`;
-        badge.title = `Реальный счётчик из HH (обновлено ${acc.hh_today_applies_updated || '—'}). Авто-сброс при count < ${hhLimit-5}`;
-      } else if (acc.hard_stopped && acc.daily_limit > 0 && acc.daily_sent >= acc.daily_limit) {
-        badge.className = 'acc-status-badge status-limit';
-        badge.textContent = `🛑 ${t('status_daily_limit')} ${acc.daily_sent}/${acc.daily_limit}`;
-        badge.title = t('status_daily_limit_hint');
-      } else if (acc.limit_exceeded) {
-        badge.className = 'acc-status-badge status-limit';
-        badge.textContent = '🚫 ' + t('status_hh_limit');
-        badge.title = acc.status_detail || t('status_hh_limit_hint');
       } else {
-        badge.className = 'acc-status-badge status-idle';
-        badge.textContent = t('status_acc_paused');
-        badge.title = '';
+        const hhUsed = acc.hh_today_applies || 0;
+        const hhLimit = acc.hh_daily_limit || 200;
+        if (acc.hard_stopped && hhUsed >= hhLimit) {
+          badge.className = 'acc-status-badge status-limit';
+          badge.textContent = `🛑 HH-лимит ${hhUsed}/${hhLimit}`;
+          badge.title = `Реальный счётчик из HH (обновлено ${acc.hh_today_applies_updated || '—'}). Авто-сброс при count < ${hhLimit-5}`;
+        } else if (acc.hard_stopped && acc.daily_limit > 0 && acc.daily_sent >= acc.daily_limit) {
+          badge.className = 'acc-status-badge status-limit';
+          badge.textContent = `🛑 ${t('status_daily_limit')} ${acc.daily_sent}/${acc.daily_limit}`;
+          badge.title = t('status_daily_limit_hint');
+        } else if (acc.limit_exceeded) {
+          badge.className = 'acc-status-badge status-limit';
+          badge.textContent = '🚫 ' + t('status_hh_limit');
+          badge.title = acc.status_detail || t('status_hh_limit_hint');
+        } else {
+          badge.className = 'acc-status-badge status-idle';
+          badge.textContent = t('status_acc_paused');
+          badge.title = '';
+        }
       }
     } else {
       const [icon, labelKey, cls] = STATUS_MAP[acc.status] || ['❓', null, 'status-idle'];
