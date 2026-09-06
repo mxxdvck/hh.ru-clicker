@@ -1,0 +1,372 @@
+"""Deterministic safety policy for LLM-assisted job-search communication.
+
+The model may draft an answer, but this module decides whether that draft is
+safe enough for unattended sending. Employer content is always untrusted.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import re
+
+
+_INJECTION_PATTERNS = (
+    r"ignore\s+(all\s+)?previous\s+instructions?",
+    r"forget\s+(all\s+)?previous\s+instructions?",
+    r"reveal\s+(the\s+)?(system\s+)?prompt",
+    r"system\s+prompt",
+    r"developer\s+message",
+    r"api[_\s-]?key",
+    r"\u0441\u0435\u043a\u0440\u0435\u0442\u043d\w*\s+\u043f\u0440\u043e\u043c\u043f\u0442",
+    r"\u0441\u0438\u0441\u0442\u0435\u043c\u043d\w*\s+\u043f\u0440\u043e\u043c\u043f\u0442",
+    r"\u0438\u0433\u043d\u043e\u0440\u0438\u0440\w*\s+\u043f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\w*\s+\u0438\u043d\u0441\u0442\u0440\u0443\u043a\u0446",
+    r"\u043f\u043e\u043a\u0430\u0436\u0438\w*\s+(api|\u043a\u043b\u044e\u0447|\u0442\u043e\u043a\u0435\u043d|prompt|\u043f\u0440\u043e\u043c\u043f\u0442)",
+)
+
+
+_SECRET_OUTPUT_PATTERNS = (
+    r"\bsk-[A-Za-z0-9_-]{12,}\b",
+    r"\bHH_BOT_[A-Z0-9_]+\b",
+    r"\bOPENAI_API_KEY\b",
+    r"\bAPI[_-]?KEY\s*[:=]",
+)
+
+_CATEGORY_MARKERS = {
+    "salary": ("salary", "compensation", "pay range", "\u0437\u0430\u0440\u043f\u043b\u0430\u0442", "\u043e\u043a\u043b\u0430\u0434", "\u0434\u043e\u0445\u043e\u0434", "\u0432\u0438\u043b\u043a\u0430"),
+    "relocation": ("relocat", "move to", "\u043f\u0435\u0440\u0435\u0435\u0437\u0434", "\u0440\u0435\u043b\u043e\u043a\u0430\u0446", "\u043a\u043e\u043c\u0430\u043d\u0434\u0438\u0440\u043e\u0432", "business trip"),
+    "schedule": ("timezone", "time zone", "schedule", "office", "remote", "hybrid", "\u043c\u0441\u043a", "\u0447\u0430\u0441\u043e\u0432", "\u0433\u0440\u0430\u0444\u0438\u043a", "\u043e\u0444\u0438\u0441", "\u0443\u0434\u0430\u043b\u0435\u043d", "\u0433\u0438\u0431\u0440\u0438\u0434"),
+    "availability": ("start date", "when can you start", "notice period", "\u0434\u0430\u0442\u0430 \u0432\u044b\u0445\u043e\u0434\u0430", "\u043a\u043e\u0433\u0434\u0430 \u0433\u043e\u0442\u043e\u0432\u044b \u0432\u044b\u0439\u0442\u0438", "\u043a\u043e\u0433\u0434\u0430 \u0441\u043c\u043e\u0436\u0435\u0442\u0435 \u043f\u0440\u0438\u0441\u0442\u0443\u043f\u0438\u0442\u044c", "\u043f\u0440\u0438\u0441\u0442\u0443\u043f\u0438\u0442\u044c"),
+    "experience": ("experience", "years", "worked with", "\u043e\u043f\u044b\u0442", "\u0441\u0442\u0430\u0436", "\u0440\u0430\u0431\u043e\u0442\u0430\u043b", "\u0440\u0430\u0431\u043e\u0442\u0430\u043b\u0438", "erp", "1c", "1\u0441", "\u0442\u0435\u0445\u043d\u043e\u043b\u043e\u0433", "\u043d\u0430\u0432\u044b\u043a"),
+    "personal": ("age", "married", "children", "citizenship", "nationality", "\u0432\u043e\u0437\u0440\u0430\u0441\u0442", "\u0441\u0435\u043c\u0435\u0439\u043d", "\u0434\u0435\u0442\u0438", "\u0433\u0440\u0430\u0436\u0434\u0430\u043d\u0441\u0442\u0432\u043e", "\u043d\u0430\u0446\u0438\u043e\u043d\u0430\u043b"),
+}
+
+
+_PROFILE_FIELDS = (
+    "salary_expectation",
+    "timezone",
+    "location",
+    "relocation",
+    "business_travel",
+    "start_date",
+    "work_format",
+    "schedule",
+)
+
+_HIGH_RISK_CATEGORIES = {"salary", "relocation", "schedule", "availability", "personal"}
+
+_CATEGORY_EVIDENCE_PREFIXES = {
+    "salary": ("salary_expectation:",),
+    "availability": ("start_date:",),
+}
+
+_TRAVEL_MARKERS = ("travel", "business trip", "командиров")
+_RELOCATION_MARKERS = ("relocat", "move to", "переезд", "релокац")
+_TIMEZONE_MARKERS = ("timezone", "time zone", "мск", "часов")
+_WORK_FORMAT_MARKERS = ("office", "remote", "hybrid", "офис", "удален", "гибрид")
+_SCHEDULE_MARKERS = ("schedule", "shift", "график", "смен")
+
+
+@dataclass
+class ReplyDecision:
+    answer: str = ""
+    action: str = "review"
+    category: str = "general"
+    confidence: float = 0.0
+    evidence: list[str] = field(default_factory=list)
+    missing_facts: list[str] = field(default_factory=list)
+    reason: str = ""
+    auto_send_allowed: bool = False
+
+
+def prompt_injection_suspected(text: str) -> bool:
+    value = str(text or "")[:12000]
+    return any(re.search(pattern, value, flags=re.I) for pattern in _INJECTION_PATTERNS)
+
+
+def classify_employer_text(text: str) -> str:
+    value = str(text or "").casefold()
+    if prompt_injection_suspected(value):
+        return "prompt_injection"
+    for category, markers in _CATEGORY_MARKERS.items():
+        if any(marker in value for marker in markers):
+            return category
+    return "general"
+
+
+def candidate_profile_text(profile: dict | None) -> str:
+    profile = profile if isinstance(profile, dict) else {}
+    lines = []
+    for key in _PROFILE_FIELDS:
+        value = str(profile.get(key) or "").strip()
+        if value:
+            lines.append(f"{key}: {value[:400]}")
+    return "\n".join(lines)
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+
+
+def evidence_supported(evidence: str, trusted_context: str) -> bool:
+    needle = _norm(evidence)
+    haystack = _norm(trusted_context)
+    if len(needle) < 4 or not haystack:
+        return False
+    return needle in haystack
+
+
+def _evidence_prefixes_for(category: str, employer_text: str) -> tuple[str, ...]:
+    text = _norm(employer_text)
+    if category in _CATEGORY_EVIDENCE_PREFIXES:
+        return _CATEGORY_EVIDENCE_PREFIXES[category]
+    if category == "relocation":
+        if any(marker in text for marker in _TRAVEL_MARKERS):
+            return ("business_travel:",)
+        return ("relocation:",)
+    if category == "schedule":
+        if any(marker in text for marker in _TIMEZONE_MARKERS):
+            return ("timezone:",)
+        if any(marker in text for marker in _WORK_FORMAT_MARKERS):
+            return ("work_format:", "location:")
+        if any(marker in text for marker in _SCHEDULE_MARKERS):
+            return ("schedule:",)
+        return ("schedule:", "timezone:", "work_format:", "location:")
+    return ()
+
+
+def _has_relevant_evidence(evidence: list[str], category: str, employer_text: str) -> bool:
+    prefixes = _evidence_prefixes_for(category, employer_text)
+    if not prefixes:
+        return bool(evidence)
+    return any(_norm(item).startswith(prefix) for item in evidence for prefix in prefixes)
+
+
+def _numeric_claims_supported(answer: str, trusted_context: str) -> bool:
+    claims = re.findall(r"(?<![\w])\d+(?:[ \u00a0.,]\d+)*(?![\w])", str(answer or ""))
+    trusted_digits = re.sub(r"\D", "", str(trusted_context or ""))
+    for claim in claims:
+        digits = re.sub(r"\D", "", claim)
+        if digits and digits not in trusted_digits:
+            return False
+    return True
+
+
+def _general_answer_needs_evidence(answer: str) -> bool:
+    value = _norm(answer)
+    patterns = (
+        r"\b(?:я\s+(?:работал|работала|работаю|жил|жила|живу|нахожусь|имею|получаю|получал|получала)|i\s+(?:work|worked|live|lived|have|earn|earned))\b",
+        r"\b(?:мой|моя|мои|my)\s+(?:опыт|зарплат|город|локац|график|schedule|experience)",
+        r"\b(?:у меня|i have)\b",
+        r"(?<![\w])\d+(?:[ \u00a0.,]\d+)*(?![\w])",
+    )
+    return any(re.search(pattern, value, flags=re.I) for pattern in patterns)
+
+
+def _safe_float(value) -> float:
+    try:
+        return max(0.0, min(float(value), 1.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def reply_decision_schema() -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "answer": {"type": "string"},
+            "action": {"type": "string", "enum": ["send", "review", "skip"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "category": {"type": "string"},
+            "evidence": {"type": "array", "items": {"type": "string"}},
+            "missing_facts": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string"},
+        },
+        "required": ["answer", "action", "confidence", "category", "evidence", "missing_facts", "reason"],
+    }
+
+
+def evaluate_reply_decision(data: dict, *, employer_text: str, trusted_context: str,
+                            min_confidence: float = 0.88) -> ReplyDecision:
+    data = data if isinstance(data, dict) else {}
+    answer = str(data.get("answer") or "").strip()[:1600]
+    category = classify_employer_text(employer_text)
+    model_category = str(data.get("category") or "").strip().lower()
+    if category == "general" and model_category in set(_CATEGORY_MARKERS) | {"general"}:
+        category = model_category
+    action = str(data.get("action") or "review").strip().lower()
+    if action not in {"send", "review", "skip"}:
+        action = "review"
+    confidence = _safe_float(data.get("confidence"))
+    evidence = [str(v).strip()[:300] for v in (data.get("evidence") or []) if str(v).strip()][:8]
+    missing = [str(v).strip()[:200] for v in (data.get("missing_facts") or []) if str(v).strip()][:8]
+    reason = str(data.get("reason") or "").strip()[:500]
+
+    decision = ReplyDecision(answer=answer, action=action, category=category, confidence=confidence,
+                             evidence=evidence, missing_facts=missing, reason=reason)
+    if not answer or action == "skip":
+        return decision
+    if category == "prompt_injection" or prompt_injection_suspected(employer_text):
+        decision.action = "review"
+        decision.reason = decision.reason or "prompt injection suspected"
+        return decision
+    if any(re.search(pattern, answer, flags=re.I) for pattern in _SECRET_OUTPUT_PATTERNS):
+        decision.action = "review"
+        decision.reason = "possible secret leakage in generated answer"
+        return decision
+    if missing or confidence < min_confidence or action != "send":
+        decision.action = "review" if action != "skip" else "skip"
+        return decision
+
+    supported = [item for item in evidence if evidence_supported(item, trusted_context)]
+    if category == "personal":
+        decision.action = "review"
+        decision.reason = decision.reason or "personal question requires explicit human review"
+        return decision
+    if category in _HIGH_RISK_CATEGORIES | {"experience"}:
+        if not evidence or len(supported) != len(evidence):
+            decision.action = "review"
+            decision.reason = decision.reason or "high-risk factual answer lacks verifiable evidence"
+            return decision
+        if category != "experience" and not _has_relevant_evidence(evidence, category, employer_text):
+            decision.action = "review"
+            decision.reason = "evidence does not support the requested fact category"
+            return decision
+        if not _numeric_claims_supported(answer, trusted_context):
+            decision.action = "review"
+            decision.reason = "generated answer contains an unsupported numeric claim"
+            return decision
+    elif evidence and len(supported) != len(evidence):
+        decision.action = "review"
+        decision.reason = decision.reason or "claimed evidence is not present in trusted context"
+        return decision
+    elif _general_answer_needs_evidence(answer) and not supported:
+        decision.action = "review"
+        decision.reason = "factual first-person claim lacks trusted evidence"
+        return decision
+
+    decision.auto_send_allowed = True
+    return decision
+
+@dataclass
+class QuestionnaireFieldDecision:
+    field: str
+    values: list[str] = field(default_factory=list)
+    category: str = "general"
+    confidence: float = 0.0
+    evidence: list[str] = field(default_factory=list)
+    missing_facts: list[str] = field(default_factory=list)
+    reason: str = ""
+    auto_fill_allowed: bool = False
+
+
+@dataclass
+class QuestionnaireBatch:
+    answers: dict = field(default_factory=dict)
+    review_fields: list[str] = field(default_factory=list)
+    decisions: dict[str, QuestionnaireFieldDecision] = field(default_factory=dict)
+    status: str = "review"
+    reason: str = ""
+
+
+def questionnaire_response_schema() -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "answers": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "field": {"type": "string"},
+                        "values": {"type": "array", "items": {"type": "string"}},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "category": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}},
+                        "missing_facts": {"type": "array", "items": {"type": "string"}},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["field", "values", "confidence", "category", "evidence", "missing_facts", "reason"],
+                },
+            },
+        },
+        "required": ["answers"],
+    }
+
+
+def evaluate_questionnaire_field(data: dict, *, question: dict, trusted_context: str,
+                                 min_confidence: float = 0.88) -> QuestionnaireFieldDecision:
+    data = data if isinstance(data, dict) else {}
+    field_name = str(question.get("field") or "").strip()
+    question_text = str(question.get("text") or "")
+    qtype = str(question.get("type") or "textarea")
+    options = question.get("options") or []
+    allowed_values = {str(opt.get("value") or "") for opt in options if isinstance(opt, dict)}
+    raw_values = data.get("values") or []
+    if isinstance(raw_values, (str, int, float, bool)):
+        raw_values = [raw_values]
+    values = [str(v).strip()[:1200] for v in raw_values if str(v).strip()][:16]
+    category = classify_employer_text(question_text)
+    model_category = str(data.get("category") or "").strip().lower()
+    if category == "general" and model_category in set(_CATEGORY_MARKERS) | {"general"}:
+        category = model_category
+    confidence = _safe_float(data.get("confidence"))
+    evidence = [str(v).strip()[:300] for v in (data.get("evidence") or []) if str(v).strip()][:8]
+    missing = [str(v).strip()[:200] for v in (data.get("missing_facts") or []) if str(v).strip()][:8]
+    reason = str(data.get("reason") or "").strip()[:500]
+    decision = QuestionnaireFieldDecision(
+        field=field_name, values=values, category=category, confidence=confidence,
+        evidence=evidence, missing_facts=missing, reason=reason,
+    )
+
+    if prompt_injection_suspected(question_text):
+        decision.reason = reason or "prompt injection suspected in questionnaire"
+        return decision
+    if not values:
+        decision.reason = reason or "questionnaire answer is empty"
+        return decision
+    if missing or confidence < min_confidence:
+        decision.reason = reason or "questionnaire answer is uncertain or missing facts"
+        return decision
+    if qtype == "checkbox":
+        if allowed_values and any(value not in allowed_values for value in values):
+            decision.reason = "checkbox answer is not one of the form values"
+            return decision
+    else:
+        if len(values) != 1:
+            decision.reason = "single-value questionnaire field returned multiple values"
+            return decision
+        if allowed_values and values[0] not in allowed_values:
+            decision.reason = "questionnaire answer is not one of the form values"
+            return decision
+
+    combined_answer = " ".join(values)
+    if any(re.search(pattern, combined_answer, flags=re.I) for pattern in _SECRET_OUTPUT_PATTERNS):
+        decision.reason = "possible secret leakage in questionnaire answer"
+        return decision
+
+    supported = [item for item in evidence if evidence_supported(item, trusted_context)]
+    if category == "personal":
+        decision.reason = reason or "personal questionnaire field requires explicit human review"
+        return decision
+    if category in _HIGH_RISK_CATEGORIES | {"experience"}:
+        if not evidence or len(supported) != len(evidence):
+            decision.reason = reason or "high-risk questionnaire answer lacks verifiable evidence"
+            return decision
+        if category != "experience" and not _has_relevant_evidence(evidence, category, question_text):
+            decision.reason = reason or "questionnaire evidence does not support the requested fact category"
+            return decision
+        if not _numeric_claims_supported(combined_answer, trusted_context):
+            decision.reason = reason or "questionnaire answer contains an unsupported numeric claim"
+            return decision
+    elif evidence and len(supported) != len(evidence):
+        decision.reason = reason or "questionnaire evidence is not present in trusted context"
+        return decision
+    elif _general_answer_needs_evidence(combined_answer) and not supported:
+        decision.reason = reason or "questionnaire factual claim lacks trusted evidence"
+        return decision
+
+    decision.auto_fill_allowed = True
+    return decision

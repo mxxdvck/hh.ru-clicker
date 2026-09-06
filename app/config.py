@@ -134,6 +134,9 @@ class Config:
     llm_applicant_gender: str = "female"
     llm_profiles: list = None         # [{name, api_key, base_url, model, enabled}]
     llm_profile_mode: str = "fallback"  # "fallback" | "roundrobin"
+    # Trusted candidate facts used by the Phase 4 auto-send policy. Empty means unknown.
+    llm_candidate_profile: dict = {}
+    llm_auto_send_min_confidence: float = 0.88
     llm_openclaw_enabled: bool = False
     llm_openclaw_agent: str = "main"
     llm_openclaw_model: str = ""
@@ -201,6 +204,36 @@ class Config:
 
 CONFIG = Config()
 CONFIG.llm_profiles = []
+
+LLM_CANDIDATE_PROFILE_FIELDS = {
+    "salary_expectation", "timezone", "location", "relocation",
+    "business_travel", "start_date", "work_format", "schedule",
+}
+LLM_AUTO_SEND_CONFIDENCE_MIN = 0.70
+LLM_AUTO_SEND_CONFIDENCE_MAX = 0.99
+
+
+def sanitize_llm_candidate_profile(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("llm_candidate_profile expects object")
+    clean = {}
+    for key in LLM_CANDIDATE_PROFILE_FIELDS:
+        raw = str(value.get(key) or "").strip()
+        if raw:
+            clean[key] = raw[:400]
+    return clean
+
+
+def coerce_llm_auto_send_confidence(value) -> float:
+    if isinstance(value, bool):
+        raise ValueError("llm_auto_send_min_confidence expects number")
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("llm_auto_send_min_confidence expects number") from exc
+    if not LLM_AUTO_SEND_CONFIDENCE_MIN <= confidence <= LLM_AUTO_SEND_CONFIDENCE_MAX:
+        raise ValueError("llm_auto_send_min_confidence must be between 0.70 and 0.99")
+    return confidence
 
 
 def resolve_letter_text(acc: dict) -> str:
@@ -283,6 +316,7 @@ _CONFIG_KEYS = [
     "skip_auto_response_vacancies", "prefer_quick_responses", "accredited_it_only",
     "hh_daily_limit", "fresh_vacancies_mode", "fresh_vacancy_hours", "fresh_apply_reserve",
     "hh_region", "llm_applicant_gender", "llm_auto_send", "llm_enabled", "llm_generate_cover_letter",
+    "llm_candidate_profile", "llm_auto_send_min_confidence",
     "llm_ws_push_enabled", "use_websocket_realtime", "chat_use_oauth", "llm_use_quick_replies",
     "hh_ai_letter_first_try", "related_vacancies_enabled", "hh_proxy_url",
 ]
@@ -290,6 +324,10 @@ _CONFIG_KEYS = [
 
 def _coerce_config_value(key: str, value):
     """Coerce a persisted value without Python's ``bool('false')`` trap."""
+    if key == "llm_candidate_profile":
+        return sanitize_llm_candidate_profile(value)
+    if key == "llm_auto_send_min_confidence":
+        return coerce_llm_auto_send_confidence(value)
     current = getattr(CONFIG, key)
     expected = type(current)
     if expected is bool:

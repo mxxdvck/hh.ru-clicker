@@ -216,7 +216,7 @@ from app.hh_api import (
     parse_work_schedules, extract_search_query, parse_apply_strategy_meta,
 )
 
-from app.llm import (generate_llm_reply, generate_llm_cover_letter, _openclaw_command,
+from app.llm import (generate_llm_reply_decision, generate_llm_cover_letter, _openclaw_command,
                      get_llm_last_status, get_llm_status_summary)
 
 from app.hh_client_factory import get_client
@@ -1547,6 +1547,8 @@ class BotManager:
                 "chat_use_oauth": CONFIG.chat_use_oauth,
                 "llm_enabled": CONFIG.llm_enabled,
                 "llm_auto_send": CONFIG.llm_auto_send,
+                "llm_candidate_profile": dict(CONFIG.llm_candidate_profile or {}),
+                "llm_auto_send_min_confidence": CONFIG.llm_auto_send_min_confidence,
                 "llm_fill_questionnaire": CONFIG.llm_fill_questionnaire,
                 "llm_use_cover_letter": CONFIG.llm_use_cover_letter,
                 "llm_generate_cover_letter": CONFIG.llm_generate_cover_letter,
@@ -2808,6 +2810,26 @@ class BotManager:
                                 self._add_acc_event(state, "\U0001f4dd", "questionnaire",
                                                     title or vid, company,
                                                     f"Ответ: {answer_preview}")
+                            elif q_result == "test" and (q_info or {}).get("error_type") == "questionnaire_review_required":
+                                review_fields = list((q_info or {}).get("review_fields") or [])
+                                finalize_apply(acc.get("name", state.name), vid, resume_id,
+                                               "test", q_info or {}, state=None)
+                                state.tests += 1
+                                add_test_vacancy(vid, title, company,
+                                                 acc["name"], acc.get("resume_hash", ""))
+                                self._push_action(state, f"\U0001f9ea {display_title[:25]}")
+                                self._add_response(state, vid, title, company, "test")
+                                self._add_log(
+                                    state.short, state.color,
+                                    f"Questionnaire requires review: {display_title} "
+                                    f"({len(review_fields)} field(s))",
+                                    "warning",
+                                )
+                                self._add_acc_event(
+                                    state, "\U0001f9ea", "test", title or vid, company,
+                                    "Phase 4 review required",
+                                )
+                                continue
                             elif q_result == "limit":
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
                                                "limit", q_info or {}, state=None)
@@ -3645,7 +3667,7 @@ class BotManager:
                         _text_buttons, conversation, thread.get("employer_name", ""), state.short,
                     )
                     if not btn_text:
-                        btn_text = (_text_buttons[0].get("text") if _text_buttons else "ДА") or "ДА"
+                        _btn_source = "review"
                     log_debug(
                         f"LLM [{state.short}] {neg_id}: робот-рекрутер, кнопки={[b.get('text') for b in _text_buttons]}, "
                         f"выбрана [{_btn_idx}] '{btn_text}' (src={_btn_source})"
@@ -3655,6 +3677,25 @@ class BotManager:
                     upsert_interview(neg_id, acc=state.short, acc_color=state.color,
                                      employer=employer_short, vacancy_title=vacancy_title, vacancy_id=vacancy_id,
                                      chat_status="robot")
+                    robot_auto_allowed = (
+                        bool(CONFIG.llm_auto_send)
+                        and not CONFIG.search_only_mode
+                        and bool(btn_text)
+                        and _btn_source == "safe_continue"
+                    )
+                    if not robot_auto_allowed:
+                        options_text = " / ".join(str(b.get("text") or "") for b in _text_buttons)[:600]
+                        review_text = f"Robot question requires review. Options: {options_text}"
+                        upsert_interview(neg_id, acc=state.short, employer=employer_short,
+                                         llm_reply=review_text, llm_sent=False, chat_status="robot")
+                        self._add_log(
+                            state.short, state.color,
+                            f"LLM [{employer_short}] robot answer kept for review ({_btn_source})",
+                            "warning", neg_id=neg_id,
+                        )
+                        state._llm_temp_skip[key] = time.time() + 1800
+                        continue
+
                     # Аудит 2026-08-17 #10: раньше robot-flow отправлял сразу без
                     # резервации global_key → под конкурентными циклами двух
                     # аккаунтов один и тот же workflow_button слался дважды.
@@ -3774,54 +3815,53 @@ class BotManager:
                     log_debug(f"LLM [{state.short}] {neg_id}: уже есть черновик в кэше, auto_send выкл — пропуск")
                     continue
                 reply_source = "llm"
+                reply_auto_send_allowed = False
+                reply_text = ""
+                hr_last = (employer_msg or "").strip()
+                _has_own_llm = bool(
+                    (CONFIG.llm_api_key or "").strip()
+                    or any(p.get("api_key") for p in (CONFIG.llm_profiles or []) if p.get("enabled", True))
+                    or getattr(CONFIG, "llm_openclaw_enabled", False)
+                )
                 if cached_draft and CONFIG.llm_auto_send:
-                    log_debug(f"LLM [{state.short}] {neg_id}: отправляю кэшированный черновик ({len(cached_draft)} симв.)")
-                    reply_text = cached_draft
-                    reply_source = "cached"
-                else:
-                    reply_text = ""
-                    hr_last = (employer_msg or "").strip()
-                    # Есть ли у нас свой LLM? Если да — идёт первым (даёт
-                    # контекстный ответ). quick_replies HH — шаблонные подсказки,
-                    # часто не в тему (могут ответить "готов работать в гибком
-                    # графике" на "можем созвониться?"). Только fallback.
-                    _has_own_llm = bool(
-                        (CONFIG.llm_api_key or "").strip()
-                        or any(p.get("api_key") for p in (CONFIG.llm_profiles or []) if p.get("enabled", True))
-                        or (getattr(CONFIG, "llm_openclaw_enabled", False))
+                    log_debug(
+                        f"LLM [{state.short}] {neg_id}: cached draft exists; regenerating under Phase 4 safety policy"
                     )
-                    if not _has_own_llm and getattr(CONFIG, "llm_use_quick_replies", True):
-                        # Своего LLM нет — берём quick_replies с умным ranking.
-                        qr = get_client(state.acc).fetch_quick_replies(neg_id, last_msg_id)
-                        if qr:
-                            is_question = "?" in hr_last
-                            _greet = ("здравствуйте", "добрый день", "добрый вечер", "приветствую")
-                            def _score(s):
-                                s_low = s.strip().lower()
-                                is_greet = len(s) < 25 and any(g in s_low for g in _greet)
-                                return (0 if (is_question and is_greet) else 1, len(s))
-                            best = max(qr, key=_score)
-                            _min_ok = 20 if is_question else 5
-                            if len(best) >= _min_ok:
-                                reply_text = best
-                                reply_source = "quick_reply"
-                                log_debug(f"LLM [{state.short}] {neg_id}: quick_replies {len(qr)} вариантов (LLM нет), взял '{reply_text[:40]}…'")
-                                self._add_log(state.short, state.color,
-                                    f"\U0001f4a1 {progress} [{employer_short}]: HH-quick_reply (LLM недоступен)", "info", neg_id=neg_id)
-                    if not reply_text:
-                        log_debug(f"LLM [{state.short}] {neg_id}: история {len(conversation)} сообщений, резюме {len(resume_text)} симв., отправляю в LLM")
-                        self._add_log(state.short, state.color,
-                            f"\U0001f916 {progress} [{employer_short}]: история {len(conversation)} сообщ., жду LLM…", "info", neg_id=neg_id)
-                        ai_hint = bool(state.vacancy_meta.get(vacancy_id, {}).get("ai_assistant_enabled"))
-                        reply_text = generate_llm_reply(
-                            conversation,
-                            thread.get("employer_name", ""),
-                            cover_letter,
-                            resume_text,
-                            account_key=f"{state.short}:{neg_id}",
-                            ai_screener_hint=ai_hint,
+                if not _has_own_llm and getattr(CONFIG, "llm_use_quick_replies", True):
+                    qr = get_client(state.acc).fetch_quick_replies(neg_id, last_msg_id)
+                    if qr:
+                        is_question = "?" in hr_last
+                        _greet = ("здравствуйте", "добрый день", "добрый вечер", "приветствую")
+                        def _score(s):
+                            value = str(s or "").strip()
+                            value_low = value.lower()
+                            is_greet = len(value) < 25 and any(g in value_low for g in _greet)
+                            return (0 if (is_question and is_greet) else 1, len(value))
+                        best = max(qr, key=_score)
+                        if len(best) >= (20 if is_question else 5):
+                            reply_text = best
+                            reply_source = "quick_reply_review"
+                if _has_own_llm:
+                    log_debug(f"LLM [{state.short}] {neg_id}: generating structured Phase 4 decision")
+                    ai_hint = bool(state.vacancy_meta.get(vacancy_id, {}).get("ai_assistant_enabled"))
+                    decision = generate_llm_reply_decision(
+                        conversation,
+                        thread.get("employer_name", ""),
+                        cover_letter,
+                        resume_text,
+                        account_key=f"{state.short}:{neg_id}",
+                        ai_screener_hint=ai_hint,
+                    )
+                    reply_text = decision.answer
+                    reply_auto_send_allowed = bool(decision.auto_send_allowed)
+                    reply_source = "llm_auto_safe" if reply_auto_send_allowed else "llm_review"
+                    if reply_text and not reply_auto_send_allowed:
+                        self._add_log(
+                            state.short, state.color,
+                            f"LLM [{employer_short}] draft requires review: {decision.category}, "
+                            f"confidence={decision.confidence:.2f}",
+                            "warning", neg_id=neg_id,
                         )
-                        reply_source = "llm"
                     if not reply_text and _has_own_llm and getattr(CONFIG, "llm_use_quick_replies", True):
                         # LLM молчит (rate-limit / down) — попробуем quick_replies как последний резерв.
                         qr = get_client(state.acc).fetch_quick_replies(neg_id, last_msg_id)
@@ -3835,7 +3875,7 @@ class BotManager:
                             best = max(qr, key=_score2)
                             if len(best) >= (20 if is_question else 5):
                                 reply_text = best
-                                reply_source = "quick_reply_fallback"
+                                reply_source = "quick_reply_fallback_review"
                                 log_debug(f"LLM [{state.short}] {neg_id}: LLM молчит, взял quick_reply '{reply_text[:40]}…'")
                     if not reply_text:
                         llm_status = get_llm_last_status(f"{state.short}:{neg_id}", "reply")
@@ -3850,7 +3890,7 @@ class BotManager:
 
                 ts = datetime.now().strftime("%d.%m %H:%M")
 
-                if CONFIG.llm_auto_send and not CONFIG.search_only_mode:
+                if CONFIG.llm_auto_send and reply_auto_send_allowed and not CONFIG.search_only_mode:
                     with self._llm_sent_lock:
                         if global_key in self._llm_sent_global:
                             log_debug(f"LLM [{state.short}] {neg_id}: другой поток уже отправил (pid={cur_pid}), пропуск")

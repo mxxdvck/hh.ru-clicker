@@ -21,7 +21,7 @@ from app.user_agent import webview_user_agent
 from app.hh_api import get_headers
 from app.oauth import _oauth_touch_resume, _token_key
 from app.questionnaire import _parse_questionnaire_fields, _parse_questionnaire_rich
-from app.llm import _randomize_text, generate_llm_questionnaire_answers, get_llm_last_status
+from app.llm import _randomize_text, generate_llm_questionnaire_decisions, get_llm_last_status
 from app.hh_resume import fetch_resume_text
 
 _HH_DEFAULT_TIMEOUT = 15
@@ -378,12 +378,24 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                     resume_text = await _aio.get_event_loop().run_in_executor(None, fetch_resume_text, acc)
                 # generate_llm_questionnaire_answers тоже sync (OpenAI client).
                 import asyncio as _aio2
-                llm_ans = await _aio2.get_event_loop().run_in_executor(
+                llm_batch = await _aio2.get_event_loop().run_in_executor(
                     None,
-                    lambda: generate_llm_questionnaire_answers(
+                    lambda: generate_llm_questionnaire_decisions(
                         rich_qs, vacancy_title, company, resume_text=resume_text, account_key=f"questionnaire:{vid}"
                     ),
                 )
+                if llm_batch.status != "ok":
+                    review_fields = list(llm_batch.review_fields or [])
+                    log_debug(
+                        f"Questionnaire {vid}: Phase 4 review required status={llm_batch.status} "
+                        f"fields={review_fields} reason={llm_batch.reason[:180]}"
+                    )
+                    return "test", {
+                        "error_type": "questionnaire_review_required",
+                        "review_fields": review_fields,
+                        "review_reason": llm_batch.reason,
+                    }
+                llm_ans = llm_batch.answers
                 if llm_ans:
                     # Validate LLM answers against actual options
                     rich_fields = {q["field"]: q for q in rich_qs}

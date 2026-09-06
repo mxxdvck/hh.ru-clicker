@@ -519,3 +519,77 @@ def test_proxy_save_empty_url_clears_proxy(ui):
     call = _wait_http_call(ui, "POST", "/api/proxy/set")[0]
     assert call["json"] == {"url": ""}
     expect(page.locator("#proxy-url")).to_have_text("(нет — напрямую)")
+
+
+# ── Phase 4 LLM safety settings ───────────────────────────────────────────
+
+def test_phase4_candidate_facts_render_and_save(ui):
+    page = _boot(ui, config={
+        "llm_candidate_profile": {
+            "salary_expectation": "250000",
+            "location": "Тула",
+            "relocation": "нет",
+        },
+        "llm_auto_send_min_confidence": 0.91,
+        "llm_profiles": [],
+    })
+    expect(page.locator("#llm-fact-salary")).to_have_value("250000")
+    expect(page.locator("#llm-fact-location")).to_have_value("Тула")
+    expect(page.locator("#llm-fact-relocation")).to_have_value("нет")
+    expect(page.locator("#llm-auto-send-confidence")).to_have_value("0.91")
+
+    page.locator("#llm-fact-salary").fill("270000")
+    page.locator("#llm-fact-work-format").fill("удалённо")
+    page.locator("#llm-auto-send-confidence").fill("0.93")
+    page.locator("button[onclick^='llmSave']").click()
+
+    legacy = _wait_http_call(ui, "POST", "/api/llm_config")[0]
+    assert legacy["json"]["candidate_profile"] == {
+        "salary_expectation": "270000",
+        "location": "Тула",
+        "relocation": "нет",
+        "work_format": "удалённо",
+    }
+    assert legacy["json"]["auto_send_min_confidence"] == 0.93
+
+def test_phase4_retired_deepseek_model_warns_and_migrates(ui):
+    page = _boot(ui, config={
+        "llm_profiles": [{
+            "name": "DeepSeek",
+            "api_key": "secret123",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-chat",
+            "enabled": True,
+        }],
+        "llm_profile_mode": "fallback",
+    })
+    row = page.locator(".llm-profile-row")
+    warning = row.locator(".lp-model-warning")
+    expect(warning).to_contain_text("выведена из эксплуатации")
+    expect(warning.locator("button")).to_contain_text("deepseek-v4-flash")
+
+    warning.locator("button").click()
+    expect(row.locator(".lp-model")).to_have_value("deepseek-v4-flash")
+    expect(warning).to_have_text("")
+
+    calls = _wait_http_call(ui, "POST", "/api/llm_profiles")
+    assert calls[-1]["json"]["profiles"][0]["model"] == "deepseek-v4-flash"
+
+
+def test_phase4_quick_setup_uses_current_deepseek_model(ui):
+    page = _boot(ui, config={"llm_profiles": [], "llm_profile_mode": "fallback"})
+    key = "sk-" + "d" * 30
+    quick = page.locator("#llm-quick-key")
+    quick.fill(key)
+    quick.press("Enter")
+
+    profile_call = _wait_http_call(ui, "POST", "/api/llm_profiles")[-1]
+    profile = profile_call["json"]["profiles"][0]
+    assert profile["name"] == "DeepSeek"
+    assert profile["base_url"] == "https://api.deepseek.com"
+    assert profile["model"] == "deepseek-v4-flash"
+
+    config_call = _wait_http_call(ui, "POST", "/api/llm_config")[-1]
+    assert config_call["json"]["model"] == "deepseek-v4-flash"
+    assert config_call["json"]["auto_send"] is False
+    expect(page.locator("#llm-quick-status")).to_contain_text("deepseek-v4-flash")

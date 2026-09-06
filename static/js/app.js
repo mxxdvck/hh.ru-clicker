@@ -784,13 +784,14 @@ function llmProfileAdd(profile) {
       </div>
       <div>
         <div style="font-size:10px;color:var(--dim);margin-bottom:2px">Модель</div>
-        <input class="apply-input lp-model" style="font-size:11px" placeholder="gpt-4o-mini" value="${esc(p.model||'')}" oninput="llmProfileAutoSave()">
+        <input class="apply-input lp-model" style="font-size:11px" placeholder="gpt-4o-mini" value="${esc(p.model||'')}" oninput="llmProfileModelWarning(this.closest('.llm-profile-row'));llmProfileAutoSave()">
+        <div class="lp-model-warning" style="font-size:10px;color:var(--yellow);margin-top:3px"></div>
       </div>
     </div>
     <div style="display:flex;gap:6px;align-items:center">
       <div style="flex:1">
         <div style="font-size:10px;color:var(--dim);margin-bottom:2px">Base URL</div>
-        <input class="apply-input lp-url" style="font-size:11px" placeholder="https://api.openai.com/v1" value="${esc(p.base_url||'')}" oninput="llmProfileAutoSave()">
+        <input class="apply-input lp-url" style="font-size:11px" placeholder="https://api.openai.com/v1" value="${esc(p.base_url||'')}" oninput="llmProfileModelWarning(this.closest('.llm-profile-row'));llmProfileAutoSave()">
       </div>
       <div style="display:flex;flex-direction:column;gap:3px;padding-top:14px">
         <button class="btn-sm" onclick="llmProfileDetect(this.closest('.llm-profile-row'))" title="Определить провайдера и загрузить модели">🔍 Определить</button>
@@ -804,6 +805,28 @@ function llmProfileAdd(profile) {
   // даже когда backend знает про сохранённый ключ этого профиля.
   const keyInp = row.querySelector('.lp-key');
   if (keyInp) _llmUpdateKeyFingerprint(keyInp);
+  llmProfileModelWarning(row);
+}
+
+function llmProfileModelWarning(row) {
+  if (!row) return;
+  const url = (row.querySelector('.lp-url')?.value || '').toLowerCase();
+  const model = (row.querySelector('.lp-model')?.value || '').trim().toLowerCase();
+  const warning = row.querySelector('.lp-model-warning');
+  if (!warning) return;
+  if (url.includes('api.deepseek.com') && ['deepseek-chat', 'deepseek-reasoner'].includes(model)) {
+    warning.innerHTML = `⚠️ ${esc(model)} выведена из эксплуатации. <button type="button" class="btn-sm" style="padding:0 5px" onclick="llmProfileMigrateDeepSeek(this.closest('.llm-profile-row'))">→ deepseek-v4-flash</button>`;
+  } else {
+    warning.textContent = '';
+  }
+}
+
+function llmProfileMigrateDeepSeek(row) {
+  const model = row?.querySelector('.lp-model');
+  if (!model) return;
+  model.value = 'deepseek-v4-flash';
+  llmProfileModelWarning(row);
+  _llmAutoSave();
 }
 
 // Alias: llmProfileAutoSave = _llmAutoSave (используется в oninput каждого поля
@@ -879,7 +902,7 @@ async function llmProfileDetect(row) {
     const res = await fetch('/api/llm_detect', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({api_key: key, base_url: urlEl?.value.trim() || ''})
+      body: JSON.stringify({api_key: key, base_url: urlEl?.value.trim() || '', model: modelEl?.value.trim() || ''})
     });
     const data = await res.json();
     if (!data.ok) {
@@ -889,8 +912,12 @@ async function llmProfileDetect(row) {
     if (data.base_url && urlEl && !urlEl.value.trim()) urlEl.value = data.base_url;
     if (data.models?.length) {
       if (modelEl && !modelEl.value.trim()) modelEl.value = data.models[0];
-      if (st) { st.textContent = `✅ ${data.models.length} моделей`; st.style.color = 'var(--green)'; }
+      if (st) {
+        st.textContent = data.model_warning ? `⚠️ ${data.model_warning}` : `✅ ${data.models.length} моделей`;
+        st.style.color = data.model_warning ? 'var(--yellow)' : 'var(--green)';
+      }
       llmShowModelPicker(row, data.base_url, data.models);
+      llmProfileModelWarning(row);
     } else {
       if (st) { st.textContent = '⚠️ Нет моделей'; st.style.color = 'var(--yellow)'; }
     }
@@ -978,6 +1005,12 @@ async function _llmSaveImpl(btn) {
         api_key: profiles[0]?.api_key || '',
         base_url: profiles[0]?.base_url || '',
         model: profiles[0]?.model || '',
+        candidate_profile: Object.fromEntries(
+          [...document.querySelectorAll('.llm-candidate-fact')]
+            .map(el => [el.dataset.fact, (el.value || '').trim()])
+            .filter(([, value]) => value)
+        ),
+        auto_send_min_confidence: parseFloat(document.getElementById('llm-auto-send-confidence')?.value || '0.88'),
       })
     });
     if (!res.ok) throw new Error(`config HTTP ${res.status}`);
@@ -1050,7 +1083,8 @@ function _isLlmAutoField(t) {
   if (!t || !t.classList) return false;
   return t.classList.contains('lp-name') || t.classList.contains('lp-key') ||
          t.classList.contains('lp-url') || t.classList.contains('lp-model') ||
-         t.classList.contains('lp-enabled') || t.id === 'llm-system-prompt';
+         t.classList.contains('lp-enabled') || t.classList.contains('llm-candidate-fact') ||
+         t.id === 'llm-system-prompt' || t.id === 'llm-auto-send-confidence';
 }
 document.addEventListener('change', (e) => { if (_isLlmAutoField(e.target)) _llmAutoSave(); }, true);
 document.addEventListener('input',  (e) => { if (_isLlmAutoField(e.target)) _llmAutoSave(); }, true);
@@ -1068,7 +1102,7 @@ function _llmDetectProvider(key) {
   if (k.startsWith('gsk_'))     return {name:'Groq',       base_url:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile'};
   if (k.startsWith('AIza'))     return {name:'Gemini',     base_url:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-2.0-flash'};
   if (k.startsWith('hf_'))      return {name:'HuggingFace',base_url:'https://api-inference.huggingface.co/v1', model:'meta-llama/Llama-3.3-70B-Instruct'};
-  if (k.startsWith('sk-') && k.length < 45) return {name:'DeepSeek', base_url:'https://api.deepseek.com', model:'deepseek-chat'};
+  if (k.startsWith('sk-') && k.length < 45) return {name:'DeepSeek', base_url:'https://api.deepseek.com', model:'deepseek-v4-flash'};
   if (k.startsWith('sk-'))      return {name:'OpenAI',     base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
   return {name:'Custom', base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
 }
@@ -1183,6 +1217,14 @@ function syncLlmSettings(snap) {
     if (rvM && cfg.related_vacancies_enabled !== undefined) rvM.checked = cfg.related_vacancies_enabled;
   }
   if (modeEl && cfg.llm_profile_mode) modeEl.value = cfg.llm_profile_mode;
+  if (!_llmSettingsEditing) {
+    const facts = cfg.llm_candidate_profile || {};
+    document.querySelectorAll('.llm-candidate-fact').forEach(el => {
+      if (document.activeElement !== el) el.value = facts[el.dataset.fact] || '';
+    });
+    const conf = document.getElementById('llm-auto-send-confidence');
+    if (conf && document.activeElement !== conf) conf.value = cfg.llm_auto_send_min_confidence ?? 0.88;
+  }
   // Update the global toggle button
   if (cfg.llm_enabled !== undefined) _llmUpdateToggleBtn(cfg.llm_enabled);
   // Syncим текстовый промпт из конфига — но не во время редактирования и
@@ -1422,7 +1464,7 @@ function syncScheduleSettings(snap) {
     const draftsCount = llmLog.filter(r => !r.sent).length;
     draftsBanner.style.display = (!autoSendOn && draftsCount > 0) ? '' : 'none';
     if (!autoSendOn && draftsCount > 0) {
-      draftsBanner.innerHTML = `📝 <b>Есть ${draftsCount} несохранённых черновиков</b> — включи «Автоотправка» (чекбокс ниже) и они уйдут на следующем цикле без новых LLM-вызовов.`;
+      draftsBanner.innerHTML = `📝 <b>Есть ${draftsCount} черновиков на проверке</b> — включение Auto safe не отправит их вслепую: перед отправкой каждый ответ должен снова пройти проверку фактов и риска.`;
     }
   }
   // Smart search filters

@@ -241,3 +241,33 @@ def test_questionnaire_no_proxy_direct(hh_no_proxy, monkeypatch):
     _method, _url, kw = rec.calls[0]
     assert "proxy" not in kw
     assert "connector" not in kw
+
+
+def test_questionnaire_policy_review_never_posts_form(hh_no_proxy, monkeypatch):
+    """Phase 4 fail-closed: review-required questionnaire must stop after GET."""
+    from app.config import CONFIG
+    from app.llm_policy import QuestionnaireBatch
+
+    html = (
+        '<div data-qa="task-question">What salary do you expect?</div>'
+        '<textarea name="task_1_text"></textarea>'
+    )
+    rec = _install_recorder(monkeypatch, get_resp=_RecResp(200, html))
+    monkeypatch.setattr(hh_apply, "search_only_blocked", lambda: False)
+    monkeypatch.setattr(CONFIG, "llm_fill_questionnaire", True)
+    monkeypatch.setattr(CONFIG, "llm_enabled", True)
+    monkeypatch.setattr(CONFIG, "llm_use_resume", False)
+    monkeypatch.setattr(
+        hh_apply,
+        "generate_llm_questionnaire_decisions",
+        lambda *args, **kwargs: QuestionnaireBatch(
+            status="review", review_fields=["task_1_text"], reason="salary fact is unknown"
+        ),
+    )
+
+    result, info = _run_coro(
+        hh_apply.fill_and_submit_questionnaire(_make_acc(), "777", "Dev", "Comp")
+    )
+    assert result == "test"
+    assert info["error_type"] == "questionnaire_review_required"
+    assert [method for method, _url, _kw in rec.calls] == ["GET"]

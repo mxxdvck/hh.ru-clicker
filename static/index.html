@@ -991,19 +991,19 @@
       <summary class="q-section-title">🤖 LLM Авто-ответы</summary>
       <div class="q-section-body">
       <div style="font-size:11px;color:var(--dim);margin-bottom:12px;line-height:1.7">
-        Бот будет автоматически отвечать на сообщения работодателей в переговорах со статусом <b>Интервью</b>.
-        Используется OpenAI-совместимый API (GPT-4o-mini, DeepSeek и др.)
+        Бот готовит ответы работодателям в переговорах со статусом <b>Интервью</b>.
+        В режиме Auto safe отправляются только ответы, прошедшие проверку фактов и риска; остальные остаются на ручную проверку.
       </div>
       <div style="font-size:11px;color:var(--cyan);margin-bottom:10px">
         💡 Включить/выключить авто-ответы — кнопка во вкладке <b>🤖 LLM Ответы</b>
       </div>
       <div id="llm-drafts-pending-banner" style="display:none;margin-bottom:8px;padding:8px 12px;background:rgba(255,170,0,0.12);border:1px solid var(--yellow);border-radius:6px;font-size:12px;color:var(--yellow)">
-        📝 <b>Есть несохранённые черновики</b> — включи «Автоотправка» и они уйдут на следующем цикле без новых LLM-вызовов.
+        📝 <b>Есть черновики на проверке</b> — включение Auto safe не отправляет их вслепую: каждый ответ должен снова пройти policy gate.
       </div>
       <div style="display:flex;gap:14px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
           <input type="checkbox" id="llm-auto-send" style="accent-color:var(--green)" checked onchange="_llmMarkEditing();sendCmd({type:'set_config',key:'llm_auto_send',value:this.checked})">
-          Отправлять автоматически (иначе только в лог)
+          Auto safe: автоматически отправлять только проверенные ответы
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
           <input type="checkbox" id="llm-use-cover-letter" style="accent-color:var(--yellow)" checked onchange="_llmMarkEditing()">
@@ -1043,6 +1043,26 @@
         <div style="font-size:11px;color:var(--dim);margin-top:4px;margin-left:22px">
           Если включено — LLM сам отвечает на вопросы работодателя при отклике. Шаблоны используются как запасной вариант.
         </div>
+      </div>
+      <div style="margin-bottom:12px;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px">
+        <div style="font-size:12px;font-weight:600;color:var(--cyan);margin-bottom:5px">🛡️ Подтверждённые факты кандидата</div>
+        <div style="font-size:10px;color:var(--dim);line-height:1.5;margin-bottom:8px">
+          Пустое поле означает «неизвестно». AI не имеет права додумывать эти данные. Рискованный ответ без подтверждённого факта останется на ручную проверку.
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+          <input id="llm-fact-salary" class="apply-input llm-candidate-fact" data-fact="salary_expectation" placeholder="Ожидаемая зарплата, напр. 250000">
+          <input id="llm-fact-location" class="apply-input llm-candidate-fact" data-fact="location" placeholder="Город / локация">
+          <input id="llm-fact-timezone" class="apply-input llm-candidate-fact" data-fact="timezone" placeholder="Часовой пояс, напр. МСК">
+          <input id="llm-fact-relocation" class="apply-input llm-candidate-fact" data-fact="relocation" placeholder="Релокация: да / нет / условия">
+          <input id="llm-fact-travel" class="apply-input llm-candidate-fact" data-fact="business_travel" placeholder="Командировки: да / нет / условия">
+          <input id="llm-fact-start-date" class="apply-input llm-candidate-fact" data-fact="start_date" placeholder="Когда готов выйти">
+          <input id="llm-fact-work-format" class="apply-input llm-candidate-fact" data-fact="work_format" placeholder="Формат: удалённо / офис / гибрид">
+          <input id="llm-fact-schedule" class="apply-input llm-candidate-fact" data-fact="schedule" placeholder="График / часы работы">
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:9px;font-size:11px">
+          Минимальная уверенность Auto safe
+          <input id="llm-auto-send-confidence" class="apply-input" type="number" min="0.70" max="0.99" step="0.01" value="0.88" style="width:80px">
+        </label>
       </div>
       <div style="margin-bottom:12px">
         <div style="font-size:11px;color:var(--dim);margin-bottom:6px">

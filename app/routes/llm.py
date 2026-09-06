@@ -9,9 +9,13 @@ import requests
 from fastapi import APIRouter, Request
 
 from app.logging_utils import log_debug
-from app.config import CONFIG, save_config
+from app.config import (
+    CONFIG, save_config, sanitize_llm_candidate_profile,
+    coerce_llm_auto_send_confidence,
+)
 from app.instances import bot
 from app.llm import _openclaw_command
+from app.llm_provider import LLMProviderError, model_warning, profile_protocol, provider_name
 
 
 router = APIRouter()
@@ -29,7 +33,6 @@ def _llm_proxies():
 
 # Модели которые стоит исключить из чат-списка
 _LLM_EXCLUDE_KEYWORDS = ("embed", "whisper", "tts", "dall", "moderation", "search", "realtime", "transcri")
-
 
 def _is_chat_model(model_id: str) -> bool:
     mid = model_id.lower()
@@ -66,6 +69,13 @@ async def api_llm_profiles(request: Request):
     profiles = body.get("profiles")
     mode = body.get("mode", "fallback")
     if isinstance(profiles, list):
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                return {"ok": False, "error": "LLM profile must be an object"}
+            try:
+                profile["protocol"] = profile_protocol(profile)
+            except LLMProviderError as exc:
+                return {"ok": False, "error": str(exc)}
         # Ключ (type=password) не подставляется из snap в UI, значит autosave
         # шлёт api_key='' если юзер сам не перепечатал ключ. Не потерять его:
         # (1) сначала strict match по (name+base_url+model),
@@ -74,6 +84,7 @@ async def api_llm_profiles(request: Request):
         def _identity(p):
             return (
                 str(p.get("name", "")).strip(),
+                str(p.get("protocol", "") or "openai_compatible").strip(),
                 str(p.get("base_url", "")).strip(),
                 str(p.get("model", "")).strip(),
             )
@@ -113,7 +124,8 @@ async def api_llm_profiles(request: Request):
     if mode in ("fallback", "roundrobin"):
         CONFIG.llm_profile_mode = mode
     save_config()
-    return {"ok": True}
+    warnings = [model_warning(p) for p in (CONFIG.llm_profiles or []) if isinstance(p, dict)]
+    return {"ok": True, "warnings": [w for w in warnings if w]}
 
 
 @router.post("/api/llm_toggle")
@@ -158,6 +170,18 @@ async def api_llm_config(request: Request):
         CONFIG.llm_use_cover_letter = _truthy(body["use_cover_letter"])
     if "use_resume" in body:
         CONFIG.llm_use_resume = _truthy(body["use_resume"])
+    if "candidate_profile" in body:
+        try:
+            CONFIG.llm_candidate_profile = sanitize_llm_candidate_profile(body["candidate_profile"])
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+    if "auto_send_min_confidence" in body:
+        try:
+            CONFIG.llm_auto_send_min_confidence = coerce_llm_auto_send_confidence(
+                body["auto_send_min_confidence"]
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
     if CONFIG.llm_profiles and CONFIG.llm_api_key:
         first = CONFIG.llm_profiles[0]
         if not first.get("api_key") or "api_key" in body:
@@ -328,35 +352,63 @@ async def api_llm_usage():
 
 @router.post("/api/llm_detect")
 async def api_llm_detect(request: Request):
-    """Определить провайдера по ключу и получить список доступных моделей."""
+    """Validate a provider profile and list available chat models without exposing its key."""
     try:
         body = await request.json()
     except Exception:
         return {"ok": False, "error": "bad json"}
     api_key = str(body.get("api_key", "")).strip()
     base_url = str(body.get("base_url", "")).strip()
+    requested_model = str(body.get("model", "")).strip()
     if not api_key:
-        return {"ok": False, "error": "Нет ключа"}
+        return {"ok": False, "error": "API key is required"}
     if not base_url:
         base_url = _detect_base_url(api_key)
     if not _is_safe_llm_base_url(base_url):
-        return {"ok": False, "error": "base_url не из списка разрешённых LLM-провайдеров"}
+        return {"ok": False, "error": "base_url is not an allowed LLM provider"}
+
+    profile = {"base_url": base_url, "protocol": body.get("protocol", "")}
+    try:
+        protocol = profile_protocol(profile)
+    except LLMProviderError as exc:
+        return {"ok": False, "base_url": base_url, "error": str(exc)}
+    provider = provider_name(profile)
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if protocol == "anthropic":
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+
     try:
         resp = requests.get(
             f"{base_url.rstrip('/')}/models",
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers=headers,
             timeout=12,
             proxies=_llm_proxies(),
         )
         if resp.status_code != 200:
-            return {"ok": False, "base_url": base_url, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            return {
+                "ok": False,
+                "base_url": base_url,
+                "provider": provider,
+                "protocol": protocol,
+                "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
+            }
         data = resp.json()
         raw_models = [m["id"] for m in data.get("data", []) if isinstance(m, dict) and "id" in m]
         chat_models = [m for m in raw_models if _is_chat_model(m)]
         chat_models.sort(key=lambda m: (
+            m in {"deepseek-v4-flash", "deepseek-v4-pro"},
             "latest" in m,
-            any(x in m for x in ("gpt-4", "claude", "llama-3", "deepseek", "gemini")),
+            any(x in m for x in ("gpt-5", "gpt-4", "claude", "llama", "deepseek", "gemini")),
         ), reverse=True)
-        return {"ok": True, "base_url": base_url, "models": chat_models}
-    except Exception as e:
-        return {"ok": False, "base_url": base_url, "error": str(e)}
+        warning = model_warning({"base_url": base_url, "model": requested_model}) if requested_model else ""
+        return {
+            "ok": True,
+            "base_url": base_url,
+            "provider": provider,
+            "protocol": protocol,
+            "models": chat_models,
+            "model_warning": warning,
+        }
+    except Exception as exc:
+        return {"ok": False, "base_url": base_url, "provider": provider, "protocol": protocol,
+                "error": str(exc)}

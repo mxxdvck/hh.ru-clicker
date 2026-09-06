@@ -13,7 +13,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.config import CONFIG, accounts_data, _CONFIG_KEYS, save_config, save_accounts
+from app.config import (
+    CONFIG, accounts_data, _CONFIG_KEYS, save_config, save_accounts,
+    sanitize_llm_candidate_profile, coerce_llm_auto_send_confidence,
+)
 from app.storage import (
     DATA_DIR, load_browser_sessions, persistence_transaction,
     save_browser_sessions, wait_for_pending_saves,
@@ -69,6 +72,10 @@ def _safe_cast(key: str, value):
     """Cast `value` to the type of `CONFIG.<key>`. Raises ValueError on mismatch.
     Prevents type confusion (e.g. dict where int expected) и сохраняет инварианты Config.
     """
+    if key == "llm_candidate_profile":
+        return sanitize_llm_candidate_profile(value)
+    if key == "llm_auto_send_min_confidence":
+        return coerce_llm_auto_send_confidence(value)
     old_val = getattr(CONFIG, key)
     expected = type(old_val)
     if expected is bool:
