@@ -3682,6 +3682,9 @@ class BotManager:
                         and not CONFIG.search_only_mode
                         and bool(btn_text)
                         and _btn_source == "safe_continue"
+                        and isinstance(_btn_idx, int)
+                        and not isinstance(_btn_idx, bool)
+                        and 0 <= _btn_idx < len(_text_buttons)
                     )
                     if not robot_auto_allowed:
                         options_text = " / ".join(str(b.get("text") or "") for b in _text_buttons)[:600]
@@ -3707,11 +3710,7 @@ class BotManager:
                             continue
                         self._llm_sent_global.add(global_key)
                     try:
-                        _selected_btn = (
-                            _text_buttons[_btn_idx]
-                            if isinstance(_btn_idx, int) and 0 <= _btn_idx < len(_text_buttons)
-                            else _text_buttons[0]
-                        )
+                        _selected_btn = _text_buttons[_btn_idx]
                         _event = (
                             _selected_btn.get("event")
                             or _selected_btn.get("event_type")
