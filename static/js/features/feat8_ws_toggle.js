@@ -18,13 +18,6 @@
     try { return fn(); } catch (e) { return fallback; }
   }
 
-  function wrapGlobal(name, makeWrapper) {
-    var orig = window[name];
-    if (typeof orig !== 'function' || orig.__feat8_wrapped) return;
-    var wrapped = makeWrapper(orig);
-    try { wrapped.__feat8_wrapped = true; } catch (e) { /* noop */ }
-    window[name] = wrapped;
-  }
 
   function dotClassForStatus(status) {
     if (status === 'connected') return 'feat8-dot-connected';
@@ -222,33 +215,16 @@
       .catch(function (error) { console.error('Phase5 UI bootstrap:', error); });
   }
 
-  wrapGlobal('wsFetchStatus', function (orig) {
-    return function () {
-      return Promise.resolve(orig.apply(this, arguments)).then(function (data) {
-        if (data && data.ok && data.accounts) lastStatus = data;
-        return data;
-      });
-    };
+  window.addEventListener('hh:ws-status', function (event) {
+    var data = event && event.detail && event.detail.status;
+    if (data && data.ok && data.accounts) lastStatus = data;
   });
 
-  wrapGlobal('wsRender', function (orig) {
-    return function () {
-      return Promise.resolve(orig.apply(this, arguments)).then(function (res) {
-        safe(updateIndicators, null);
-        safe(syncGlobalCheckbox, null);
-        return res;
-      });
-    };
+  window.addEventListener('hh:ws-rendered', function () {
+    safe(updateIndicators, null);
+    safe(syncGlobalCheckbox, null);
   });
 
-  wrapGlobal('renderAll', function (orig) {
-    return function () {
-      var res = orig.apply(this, arguments);
-      safe(syncGlobalCheckbox, null);
-      safe(syncTabAria, null);
-      return res;
-    };
-  });
 
   window.WsToggle = {
     refresh:function (btn) { return typeof window.wsRefresh === 'function' ? window.wsRefresh(btn) : undefined; },

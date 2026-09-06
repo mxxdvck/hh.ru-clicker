@@ -1185,13 +1185,20 @@ function wsBadgeStyle(status) {
   return `color:${color};border-color:${color}`;
 }
 
+function wsEmit(name, detail) {
+  try { window.dispatchEvent(new CustomEvent(name, {detail})); } catch (_) {}
+}
+
 async function wsFetchStatus() {
+  let data;
   try {
     const res = await fetch('/api/ws/status');
-    return await res.json();
+    data = await res.json();
   } catch (e) {
-    return {ok: false, error: String(e)};
+    data = {ok: false, error: String(e)};
   }
+  wsEmit('hh:ws-status', {status: data});
+  return data;
 }
 
 // Перерисовка блока: глобальный флаг + строки аккаунтов с бейджами
@@ -1214,10 +1221,11 @@ async function wsRender() {
     }
   }
   const list = document.getElementById('ws-acc-list');
-  if (!list) return;
+  if (!list) { wsEmit('hh:ws-rendered', {status: data}); return; }
   if (!data.ok) {
     // Например ws_manager ещё не готов (503) — показываем честно, без падения
     list.innerHTML = `<div style="font-size:12px;color:var(--red)">❌ ${esc(data.error || 'Ошибка')}</div>`;
+    wsEmit('hh:ws-rendered', {status: data});
     return;
   }
   // Основные аккаунты из snapshot'а (temp-сессии WS-слушатель не поддерживает)
@@ -1225,6 +1233,7 @@ async function wsRender() {
   const wsAccs = data.accounts || {};
   if (!accs.length) {
     list.innerHTML = '<div class="c-dim" style="font-size:12px">Нет аккаунтов</div>';
+    wsEmit('hh:ws-rendered', {status: data});
     return;
   }
   list.innerHTML = '';
@@ -1248,6 +1257,7 @@ async function wsRender() {
       `</span>`;
     list.appendChild(div);
   });
+  wsEmit('hh:ws-rendered', {status: data});
 }
 
 // Вкл/выкл слушателя для аккаунта → после клика перерисовываем статусы

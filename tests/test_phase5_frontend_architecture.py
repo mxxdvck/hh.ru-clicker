@@ -28,3 +28,10 @@ def test_phase5_migrated_features_do_not_monkey_patch_render_globals():
     assert "hh:account-card-updated" in feat7
     assert "hh:snapshot" in feat4
     assert "hh:snapshot" in feat7
+
+
+def test_phase5_feat8_uses_events_instead_of_global_wrappers():
+    source = _source("static/js/features/feat8_ws_toggle.js")
+    assert "wrapGlobal(" not in source
+    assert "hh:ws-status" in source
+    assert "hh:ws-rendered" in source
