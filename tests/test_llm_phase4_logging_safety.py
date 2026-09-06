@@ -18,7 +18,7 @@ def _profile():
 
 
 def test_invalid_structured_reply_is_not_exposed_as_review_draft(monkeypatch):
-    secret = "SECRET sk-ant-abcdefghijklmnop"
+    secret = "SECRET_TOKEN_INVALID_JSON_abcdefghijklmnop"
     monkeypatch.setattr(CONFIG, "llm_profile_mode", "fallback")
     monkeypatch.setattr(llm, "_enabled_profiles", lambda _config: [_profile()])
     monkeypatch.setattr(
@@ -40,7 +40,7 @@ def test_invalid_structured_reply_is_not_exposed_as_review_draft(monkeypatch):
 
 
 def test_provider_error_body_is_not_logged_or_exposed(monkeypatch):
-    secret = "SECRET_PROVIDER_BODY sk-ant-abcdefghijklmnop"
+    secret = "SECRET_PROVIDER_BODY_abcdefghijklmnop"
     logs = []
 
     class ProviderBoom(RuntimeError):
@@ -90,8 +90,12 @@ def test_robot_debug_does_not_log_button_texts():
     assert "robot decision; buttons={len(_text_buttons)}" in source
 
 def test_provider_http_error_never_embeds_response_body():
-    secret = "SECRET_RESPONSE_BODY sk-ant-abcdefghijklmnop"
+    secret = "SECRET_RESPONSE_BODY_abcdefghijklmnop"
     exc = llm_provider._status_error(500, secret, "anthropic")
     assert secret not in str(exc)
     assert "response_chars=" in str(exc)
     assert exc.status_code == 500
+
+def test_manager_activity_log_does_not_embed_reply_snippets():
+    source = (Path(__file__).parents[1] / "app/manager.py").read_text(encoding="utf-8")
+    assert "reply_text[:60]" not in source

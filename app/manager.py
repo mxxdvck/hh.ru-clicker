@@ -3978,7 +3978,7 @@ class BotManager:
                         self._llm_sent_global.add(global_key)
                         self._llm_sent_by_neg_id.setdefault(neg_id, set()).add(global_key)
                     self._add_log(state.short, state.color,
-                        f"\U0001f916 [{employer_short}] отправляю: «{reply_text[:60]}»", "info", neg_id=neg_id)
+                        f"\U0001f916 [{employer_short}] sending reply ({len(reply_text)} chars)", "info", neg_id=neg_id)
                     # Читаем HR-сообщение (галочка «прочитано» в UI HH) + typing indicator
                     # 2-4 сек — HR получает push «печатает…», ответ выглядит человечнее.
                     try:
@@ -4018,7 +4018,7 @@ class BotManager:
                                          replied_msg_id=last_msg_id, llm_source=reply_source,
                                          llm_category=reply_category, llm_review_reason="")
                         self._add_log(state.short, state.color,
-                            f"\U0001f916 Авто-ответ → {employer}: {reply_text[:60]}…", "success", neg_id=neg_id)
+                            f"\U0001f916 auto-reply sent to {employer} ({len(reply_text)} chars)", "success", neg_id=neg_id)
                         self._push_llm_log({
                             "time": ts, "acc": state.short, "color": state.color,
                             "employer": employer, "vacancy_title": vacancy_title,
@@ -4043,7 +4043,7 @@ class BotManager:
                         upsert_interview(neg_id, acc=state.short, acc_color=state.color,
                                          llm_reply=reply_text, llm_sent=False)
                         self._add_log(state.short, state.color,
-                            f"\U0001f916 Черновик (ошибка отправки, повтор ~30м) → {employer}: {reply_text[:60]}…", "warning", neg_id=neg_id)
+                            f"\U0001f916 send failed; draft kept for {employer} ({len(reply_text)} chars)", "warning", neg_id=neg_id)
                         self._push_llm_log({
                             "time": ts, "acc": state.short, "color": state.color,
                             "employer": employer, "vacancy_title": vacancy_title,
@@ -4086,7 +4086,7 @@ class BotManager:
                                      llm_review_reason=reply_review_reason if delivery_mode == "review" else "")
                     self._add_log(
                         state.short, state.color,
-                        f"\U0001f916 {draft_log}: {reply_text[:60]}…",
+                        f"\U0001f916 {draft_log} ({len(reply_text)} chars)",
                         "warning" if delivery_mode == "review" else "info",
                         neg_id=neg_id,
                     )
