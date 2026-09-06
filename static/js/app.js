@@ -1472,20 +1472,7 @@ function syncScheduleSettings(snap) {
   // Баннер «есть несохранённые черновики»: показываем когда auto_send выкл
   // и в llm_log есть незаотправленные записи. Чтобы юзер не пропустил что
   // бот сгенерил кучу ответов и сидит ждёт флипа.
-  const draftsBanner = document.getElementById('llm-drafts-pending-banner');
-  if (draftsBanner) {
-    const autoSendOn = cfg.llm_auto_send === true;
-    const llmLog = State.lastSnapshot?.llm_log || [];
-    const draftsCount = llmLog.filter(r => !r.sent).length;
-    const reviewCount = llmLog.filter(r => !r.sent && String(r.source || '').includes('review')).length;
-    const visibleCount = autoSendOn ? reviewCount : draftsCount;
-    draftsBanner.style.display = visibleCount > 0 ? '' : 'none';
-    if (visibleCount > 0) {
-      draftsBanner.innerHTML = autoSendOn
-        ? `⚠️ <b>${reviewCount} черновиков требуют ручной проверки</b> - Auto safe не отправил их из-за policy gate.`
-        : `📝 <b>Есть ${draftsCount} черновиков на проверке</b> - включение Auto safe не отправит их вслепую: перед отправкой новый ответ должен снова пройти проверку фактов и риска.`;
-    }
-  }
+  _renderLlmDraftBanner(snap);
   // Smart search filters
   const fa = document.getElementById('filter-agencies');
   if (fa && cfg.filter_agencies !== undefined) fa.checked = cfg.filter_agencies;
@@ -1693,10 +1680,8 @@ function updateLlmStatusBar(snap) {
   const pendingByAcc = accs.reduce((s, a) => s + (a.llm_pending_chats || 0), 0);
   stChats.textContent = `🎯 ${totalInterviews} интервью${pendingByAcc ? ` · ⏳ ${pendingByAcc} в обработке` : ''}`;
 
-  // Replied count from llm_log
-  const sentCount = llmLog.filter(l => l.sent).length;
-  const draftCount = llmLog.filter(l => !l.sent).length;
-  const reviewCount = llmLog.filter(l => !l.sent && String(l.source || '').includes('review')).length;
+  // Persisted summary survives process restarts; llm_log is only the live-session fallback.
+  const {drafts: draftCount, reviews: reviewCount, replied: sentCount} = _llmDraftCounts(snap);
   const draftHint = autoSend
     ? (reviewCount ? ` ← ${reviewCount} требуют проверки` : '')
     : (draftCount ? ' ← Auto safe выключен' : '');
@@ -1718,6 +1703,37 @@ function oauthToggleAccount(idx, btn) {
 
 // ── LLM tab: interviews from DB ───────────────────────────────
 let _llmRowsCache = [];
+let _llmPersistedSummary = null;
+
+function _llmDraftCounts(snap) {
+  const llmLog = snap?.llm_log || [];
+  const fallbackDrafts = llmLog.filter(l => !l.sent).length;
+  const fallbackReviews = llmLog.filter(l => !l.sent && String(l.source || '').includes('review')).length;
+  const fallbackReplied = llmLog.filter(l => l.sent).length;
+  const summary = _llmPersistedSummary;
+  const persistedDrafts = Number(summary?.drafts);
+  const persistedReviews = Number(summary?.reviews);
+  const persistedReplied = Number(summary?.replied);
+  return {
+    drafts: Number.isFinite(persistedDrafts) ? Math.max(fallbackDrafts, Math.max(0, persistedDrafts)) : fallbackDrafts,
+    reviews: Number.isFinite(persistedReviews) ? Math.max(fallbackReviews, Math.max(0, persistedReviews)) : fallbackReviews,
+    replied: Number.isFinite(persistedReplied) ? Math.max(fallbackReplied, Math.max(0, persistedReplied)) : fallbackReplied,
+  };
+}
+
+function _renderLlmDraftBanner(snap) {
+  const draftsBanner = document.getElementById('llm-drafts-pending-banner');
+  if (!draftsBanner) return;
+  const autoSendOn = snap?.config?.llm_auto_send === true;
+  const {drafts: draftsCount, reviews: reviewCount} = _llmDraftCounts(snap);
+  const visibleCount = autoSendOn ? reviewCount : draftsCount;
+  draftsBanner.style.display = visibleCount > 0 ? '' : 'none';
+  if (visibleCount > 0) {
+    draftsBanner.innerHTML = autoSendOn
+      ? `<b>${reviewCount} черновиков требуют ручной проверки</b> - Auto safe не отправил их из-за policy gate.`
+      : `<b>${draftsCount} черновиков на проверке</b> - при включении Auto safe новый ответ всё равно будет заново проверен перед отправкой.`;
+  }
+}
 
 // Кэш рейтингов работодателей: vacancy_id → {total, recommend_pct, name} | null.
 // Бэкенд тоже кэширует 24ч, но клиентский кэш экономит сетевой round-trip
@@ -1833,10 +1849,19 @@ async function llmInterviewsLoad() {
   const acc = document.getElementById('llm-log-acc-filter')?.value || '';
   const statusF = document.getElementById('llm-log-sent-filter')?.value || '';
   let url = `/api/interviews?limit=10000${acc ? '&acc=' + encodeURIComponent(acc) : ''}${statusF ? '&status=' + encodeURIComponent(statusF) : ''}`;
+  const summaryUrl = `/api/interviews/summary${acc ? '?acc=' + encodeURIComponent(acc) : ''}`;
   let rows;
+  _llmPersistedSummary = null;
   try {
-    const res = await fetch(url);
+    const [res, summaryRes] = await Promise.all([
+      fetch(url),
+      fetch(summaryUrl).catch(() => null),
+    ]);
     rows = await res.json();
+    if (summaryRes?.ok) {
+      const summary = await summaryRes.json();
+      if (summary && typeof summary === 'object') _llmPersistedSummary = summary;
+    }
     _llmLastDbRefresh = Date.now();
   } catch(e) {
     _llmLoading = false;
@@ -1846,6 +1871,8 @@ async function llmInterviewsLoad() {
   }
   _llmRowsCache = Array.isArray(rows) ? rows : [];
   llmInterviewsRender();
+  _renderLlmDraftBanner(State.lastSnapshot);
+  updateLlmStatusBar(State.lastSnapshot);
   // HR-ссылки (Google Forms / Yandex Forms / Telegram / etc.) — извлекаем при
   // каждой перезагрузке interviews. Отдельный рендер, чтобы фильтры/сортировка
   // основной таблицы не перезаписывали блок ссылок.

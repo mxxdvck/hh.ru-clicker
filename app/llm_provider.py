@@ -186,8 +186,11 @@ def _status_error(status: int, text: str, provider: str) -> LLMProviderError:
         kind = "server"
     else:
         kind = "http_error"
-    return LLMProviderError(f"{provider} HTTP {status}: {text[:240]}", kind=kind,
-                            retryable=status in _TRANSIENT_HTTP, status_code=status, provider=provider)
+    body_len = len(str(text or ""))
+    return LLMProviderError(
+        f"{provider} HTTP {status}; response_chars={body_len}",
+        kind=kind, retryable=status in _TRANSIENT_HTTP, status_code=status, provider=provider,
+    )
 
 
 def _classify_exception(exc: Exception, provider: str) -> LLMProviderError:

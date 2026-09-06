@@ -77,3 +77,27 @@ def test_replied_msg_id_str_coerced(fresh_storage):
     storage.upsert_interview("n1", acc="a", llm_sent=True, replied_msg_id=12345)
     keys = storage.get_replied_keys()
     assert ("n1", "12345") in keys
+
+def test_interviews_summary_counts_persisted_review_drafts(fresh_storage):
+    storage = fresh_storage
+    storage.upsert_interview(
+        "review", acc="a", llm_reply="draft", llm_sent=False,
+        llm_source="llm_review", llm_review_reason="human review",
+    )
+    storage.upsert_interview(
+        "manual", acc="a", llm_reply="draft", llm_sent=False,
+        llm_source="draft_manual", llm_review_reason="",
+    )
+    storage.upsert_interview(
+        "sent", acc="a", llm_reply="done", llm_sent=True, replied_msg_id="m1",
+        llm_source="llm_auto_safe", llm_review_reason="",
+    )
+
+    summary = storage.get_interviews_summary(acc="a")
+    assert summary == {
+        "total": 3,
+        "drafts": 2,
+        "reviews": 1,
+        "pending": 0,
+        "replied": 1,
+    }

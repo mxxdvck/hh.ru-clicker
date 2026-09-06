@@ -207,6 +207,33 @@ def _llm_delivery_mode(*, auto_send: bool, auto_send_allowed: bool, search_only:
     return "send"
 
 
+def _robot_draft_metadata(*, auto_send: bool, search_only: bool, button_source: str) -> tuple[str, str]:
+    """Classify a non-sent recruiter-button outcome for persistence and review UI."""
+    if search_only:
+        return "robot_search_only", ""
+    if not auto_send:
+        return "robot_draft_manual", ""
+    return "robot_review", f"robot button requires human review ({button_source or 'review'})"
+
+
+def _questionnaire_event_summary(info: dict | None) -> str:
+    """Summarize submitted questionnaire sources without logging answer contents."""
+    info = info if isinstance(info, dict) else {}
+
+    def _count(key: str) -> int:
+        try:
+            return max(0, int(info.get(key) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    fields = _count("questionnaire_fields")
+    if not fields:
+        return "Опрос отправлен"
+    llm_fields = min(fields, _count("questionnaire_llm_fields"))
+    rule_fields = min(fields, _count("questionnaire_rule_fields"))
+    return f"Ответов: {fields} | LLM: {llm_fields} | правила: {rule_fields}"
+
+
 from app.config import (
     CONFIG, accounts_data,
     save_config, load_config, save_accounts, load_accounts,
@@ -2834,10 +2861,10 @@ class BotManager:
                                 q_info_full = {**state.vacancy_meta.get(vid, {}), **info, **(q_info or {})}
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
                                                "sent", q_info_full, state=state, questionnaire=True)
-                                answer_preview = questionnaire_default_answer()[:50]
-                                self._add_acc_event(state, "\U0001f4dd", "questionnaire",
-                                                    title or vid, company,
-                                                    f"Ответ: {answer_preview}")
+                                self._add_acc_event(
+                                    state, "\U0001f4dd", "questionnaire", title or vid, company,
+                                    _questionnaire_event_summary(q_info),
+                                )
                             elif q_result == "test" and (q_info or {}).get("error_type") == "questionnaire_review_required":
                                 review_fields = list((q_info or {}).get("review_fields") or [])
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
@@ -3698,11 +3725,13 @@ class BotManager:
                     if not btn_text:
                         _btn_source = "review"
                     log_debug(
-                        f"LLM [{state.short}] {neg_id}: робот-рекрутер, кнопки={[b.get('text') for b in _text_buttons]}, "
-                        f"выбрана [{_btn_idx}] '{btn_text}' (src={_btn_source})"
+                        f"LLM [{state.short}] {neg_id}: robot decision; buttons={len(_text_buttons)} "
+                        f"index={_btn_idx} selected={bool(btn_text)} src={_btn_source}"
                     )
-                    self._add_log(state.short, state.color,
-                        f"\U0001f916 [{employer_short}] \U0001f916 Робот → '{btn_text}' ({_btn_source})", "info", neg_id=neg_id)
+                    self._add_log(
+                        state.short, state.color,
+                        f"\U0001f916 [{employer_short}] robot decision ({_btn_source})", "info", neg_id=neg_id,
+                    )
                     upsert_interview(neg_id, acc=state.short, acc_color=state.color,
                                      employer=employer_short, vacancy_title=vacancy_title, vacancy_id=vacancy_id,
                                      chat_status="robot")
@@ -3718,12 +3747,30 @@ class BotManager:
                     if not robot_auto_allowed:
                         options_text = " / ".join(str(b.get("text") or "") for b in _text_buttons)[:600]
                         review_text = f"Robot question requires review. Options: {options_text}"
-                        upsert_interview(neg_id, acc=state.short, employer=employer_short,
-                                         llm_reply=review_text, llm_sent=False, chat_status="robot")
+                        robot_draft_source, robot_review_reason = _robot_draft_metadata(
+                            auto_send=bool(CONFIG.llm_auto_send),
+                            search_only=bool(CONFIG.search_only_mode),
+                            button_source=_btn_source,
+                        )
+                        upsert_interview(
+                            neg_id, acc=state.short, employer=employer_short,
+                            llm_reply=review_text, llm_sent=False, chat_status="robot",
+                            llm_source=robot_draft_source, llm_category="robot",
+                            llm_review_reason=robot_review_reason,
+                        )
+                        if robot_draft_source == "robot_review":
+                            robot_log = "robot answer requires human review"
+                            robot_level = "warning"
+                        elif robot_draft_source == "robot_search_only":
+                            robot_log = "robot answer kept as search-only draft"
+                            robot_level = "info"
+                        else:
+                            robot_log = "robot answer kept as manual draft"
+                            robot_level = "info"
                         self._add_log(
                             state.short, state.color,
-                            f"LLM [{employer_short}] robot answer kept for review ({_btn_source})",
-                            "warning", neg_id=neg_id,
+                            f"LLM [{employer_short}] {robot_log} ({_btn_source})",
+                            robot_level, neg_id=neg_id,
                         )
                         state._llm_temp_skip[key] = time.time() + 1800
                         continue
@@ -3899,7 +3946,7 @@ class BotManager:
                                 reply_source = "quick_reply_fallback_review"
                                 reply_category = "quick_reply"
                                 reply_review_reason = "fallback quick reply requires human review"
-                                log_debug(f"LLM [{state.short}] {neg_id}: LLM молчит, взял quick_reply '{reply_text[:40]}…'")
+                                log_debug(f"LLM [{state.short}] {neg_id}: quick_reply fallback selected; len={len(reply_text)}")
                     if not reply_text:
                         llm_status = get_llm_last_status(f"{state.short}:{neg_id}", "reply")
                         if llm_status.get("provider") == "openclaw" and llm_status.get("status") == "timeout":

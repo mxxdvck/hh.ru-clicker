@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from app.storage import (
     _load_cache, _cache_applied, _cache_tests, _cache_lock,
     get_applied_list, get_vacancy_db, get_test_list,
-    get_interviews_list,
+    get_interviews_list, get_interviews_summary,
     _save_applied_async, _save_tests_async,
 )
 from app.instances import bot
@@ -26,6 +26,11 @@ async def api_applied(limit: int = 300):
 @router.get("/api/tests")
 async def api_tests(limit: int = 300):
     return get_test_list(limit)
+
+
+@router.get("/api/interviews/summary")
+async def api_interviews_summary(acc: str = ""):
+    return get_interviews_summary(acc=acc)
 
 
 @router.get("/api/interviews")

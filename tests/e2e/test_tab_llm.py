@@ -401,3 +401,22 @@ def test_review_draft_shows_reason_and_safe_manual_actions(ui):
     expect(reply.get_by_role("button", name="📋 Копировать")).to_be_visible()
     link = reply.get_by_role("link", name=re.compile("Открыть чат HH"))
     expect(link).to_have_attribute("href", "https://hh.ru/chat/review-777")
+
+def test_persisted_review_summary_survives_empty_session_log(ui):
+    _enable_llm(ui)
+    ui.state["llm_log"] = []
+    ui.data["interviews"] = [
+        _row("review-1", "A", "Review Co", status="draft", llm_reply="draft"),
+        _row("manual-1", "A", "Draft Co", status="draft", llm_reply="draft"),
+        _row("sent-1", "A", "Sent Co", status="replied", llm_reply="sent"),
+    ]
+    ui.data["interviews_summary"] = {
+        "total": 3, "drafts": 2, "reviews": 1, "pending": 0, "replied": 1,
+    }
+    ui.open()
+    _open_llm_tab(ui)
+    ui.wait_until(lambda: bool(_calls(ui, "GET", "/api/interviews/summary")))
+    status = ui.page.locator("#llm-st-replied")
+    expect(status).to_contain_text("1 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e")
+    expect(status).to_contain_text("2 \u0447\u0435\u0440\u043d\u043e\u0432\u0438\u043a\u043e\u0432")
+    expect(status).to_contain_text("1 \u0442\u0440\u0435\u0431\u0443\u044e\u0442 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438")

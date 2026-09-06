@@ -26,9 +26,12 @@ def test_quick_setup_avoids_retired_provider_defaults():
 def test_review_drafts_stay_visible_when_auto_safe_is_on():
     source = (Path(__file__).parents[1] / "static/js/app.js").read_text(encoding="utf-8")
     assert "draftsBanner.style.display = visibleCount > 0 ? '' : 'none'" in source
-    assert "String(r.source || '').includes('review')" in source
+    assert "function _llmDraftCounts" in source
+    assert "String(l.source || '').includes('review')" in source
+    assert "Math.max(fallbackReviews" in source
     assert "черновиков требуют ручной проверки" in source
     assert "требуют проверки" in source
+
 
 def test_review_table_exposes_copy_and_hh_chat_actions():
     source = (Path(__file__).parents[1] / "static/js/app.js").read_text(encoding="utf-8")

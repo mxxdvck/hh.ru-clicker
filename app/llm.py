@@ -168,6 +168,22 @@ def get_llm_last_status(account_key: str = "", kind: str = "reply") -> dict:
         return dict((_llm_last_status.get(key, {}) or {}).get(kind, {}))
 
 
+def _safe_exception_detail(exc: Exception) -> str:
+    """Return diagnostics metadata without persisting provider/body contents."""
+    parts = [type(exc).__name__]
+    kind = str(getattr(exc, "kind", "") or "").strip()
+    status = getattr(exc, "status_code", None)
+    provider = str(getattr(exc, "provider", "") or "").strip()
+    if provider:
+        parts.append(f"provider={provider[:40]}")
+    if kind:
+        parts.append(f"kind={kind[:40]}")
+    if isinstance(status, int):
+        parts.append(f"http={status}")
+    parts.append(f"message_chars={len(str(exc))}")
+    return "; ".join(parts)
+
+
 def get_llm_status_summary() -> dict:
     summary = {
         "configured_provider": "",
@@ -374,7 +390,7 @@ def generate_llm_cover_letter(vacancy_title: str = "", company: str = "",
                 if " " in text and len(text) > 40:
                     text = text.rsplit(" ", 1)[0].rstrip(" ,;:-")
             if len(text) < 25:
-                _set_llm_last_status(account_key, "cover_letter", pname, "too_short", text[:200])
+                _set_llm_last_status(account_key, "cover_letter", pname, "too_short", f"{len(text)} chars")
                 continue
             _track_usage(account_key, "cover_letter")
             detail = f"{result.model}; {len(text)} chars; {result.latency_ms}ms; attempts={result.attempts}"
@@ -382,8 +398,9 @@ def generate_llm_cover_letter(vacancy_title: str = "", company: str = "",
             log_debug(f"generate_llm_cover_letter: {pname} ({result.model}), {len(text)} chars, {result.latency_ms}ms")
             return text
         except Exception as exc:
-            log_debug(f"generate_llm_cover_letter {pname} error: {exc}")
-            _set_llm_last_status(account_key, "cover_letter", _provider_name(profile), "error", str(exc)[:300])
+            error_detail = _safe_exception_detail(exc)
+            log_debug(f"generate_llm_cover_letter {pname} error: {error_detail}")
+            _set_llm_last_status(account_key, "cover_letter", _provider_name(profile), "error", error_detail)
     return ""
 
 
@@ -471,7 +488,6 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
             _llm_rr_index[account_key] = idx + 1
         selected = [profiles[idx]]
 
-    last_draft = ""
     for profile in selected:
         pname = _profile_name(profile)
         warning = _model_warning(profile)
@@ -490,8 +506,9 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
                 continue
             parsed = _extract_json(raw)
             if parsed is None:
-                last_draft = raw[:1600]
-                _set_llm_last_status(account_key, "reply", result.provider, "invalid_json", raw[:240])
+                _set_llm_last_status(
+                    account_key, "reply", result.provider, "invalid_json", f"{len(raw)} chars"
+                )
                 continue
             decision = evaluate_reply_decision(
                 parsed,
@@ -514,11 +531,10 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
             _set_llm_last_status(account_key, "reply", result.provider, "ok", detail)
             return decision
         except Exception as exc:
-            log_debug(f"generate_llm_reply_decision {pname} error: {exc}")
-            _set_llm_last_status(account_key, "reply", _provider_name(profile), "error", str(exc)[:300])
+            error_detail = _safe_exception_detail(exc)
+            log_debug(f"generate_llm_reply_decision {pname} error: {error_detail}")
+            _set_llm_last_status(account_key, "reply", _provider_name(profile), "error", error_detail)
             continue
-    if last_draft:
-        return ReplyDecision(answer=last_draft, action="review", reason="provider returned unstructured draft")
     _set_llm_last_status(account_key, "reply", "provider_chain", "failed_all", "all configured profiles failed")
     return ReplyDecision(action="skip", reason="all configured providers failed")
 
@@ -656,12 +672,12 @@ def _generate_openclaw_reply(messages: list, account_key: str = "") -> str:
     if text:
         cleaned = _clean_openclaw_text(text)
         if _looks_like_invalid_reply(cleaned):
-            log_debug(f"generate_llm_reply: invalid/fallback reply rejected: {cleaned[:300]}")
-            _set_llm_last_status(account_key, "reply", "openclaw", "invalid_reply", cleaned[:200])
+            log_debug(f"generate_llm_reply: invalid/fallback reply rejected; chars={len(cleaned)}")
+            _set_llm_last_status(account_key, "reply", "openclaw", "invalid_reply", f"{len(cleaned)} chars")
             return ""
         if not _looks_like_direct_answer(conversation, cleaned):
-            log_debug(f"generate_llm_reply: non-answer reply rejected: {cleaned[:300]}")
-            _set_llm_last_status(account_key, "reply", "openclaw", "non_answer", cleaned[:200])
+            log_debug(f"generate_llm_reply: non-answer reply rejected; chars={len(cleaned)}")
+            _set_llm_last_status(account_key, "reply", "openclaw", "non_answer", f"{len(cleaned)} chars")
             return ""
         text = cleaned
     if text:
@@ -736,16 +752,19 @@ def _run_openclaw_prompt(prompt: str, account_key: str, kind: str) -> str:
         )
         raw = (proc.stdout or "").strip()
         if proc.returncode != 0:
-            detail = (proc.stderr or raw)[:500]
-            log_debug(f"{kind} openclaw error rc={proc.returncode}: {detail}")
+            detail = (
+                f"rc={proc.returncode}; stderr_chars={len(proc.stderr or '')}; "
+                f"stdout_chars={len(raw)}"
+            )
+            log_debug(f"{kind} openclaw error: {detail}")
             _set_llm_last_status(account_key, kind, "openclaw", "error", detail)
             return ""
         text = _extract_openclaw_text(raw)
         if text:
             _set_llm_last_status(account_key, kind, "openclaw", "ok", f"{len(text)} chars")
         else:
-            log_debug(f"{kind} openclaw empty text; stdout_head={raw[:300]}")
-            _set_llm_last_status(account_key, kind, "openclaw", "empty", raw[:300])
+            log_debug(f"{kind} openclaw empty text; stdout_chars={len(raw)}")
+            _set_llm_last_status(account_key, kind, "openclaw", "empty", f"{len(raw)} chars")
         return text
     except subprocess.TimeoutExpired:
         detail = f"timed out after {timeout}s"
@@ -753,7 +772,7 @@ def _run_openclaw_prompt(prompt: str, account_key: str, kind: str) -> str:
         _set_llm_last_status(account_key, kind, "openclaw", "timeout", detail)
         return ""
     except Exception as e:
-        detail = str(e)[:500]
+        detail = _safe_exception_detail(e)
         log_debug(f"{kind} openclaw exception: {detail}")
         _set_llm_last_status(account_key, kind, "openclaw", "exception", detail)
         return ""
@@ -926,7 +945,10 @@ def generate_llm_questionnaire_decisions(rich_questions: list, vacancy_title: st
             payload = _extract_json(result.text or "")
             if payload is None:
                 last_reason = f"{pname} returned invalid JSON"
-                _set_llm_last_status(account_key, "questionnaire", result.provider, "invalid_json", result.text[:300])
+                _set_llm_last_status(
+                    account_key, "questionnaire", result.provider, "invalid_json",
+                    f"{len(result.text or '')} chars",
+                )
                 continue
             batch = _evaluate_questionnaire_payload(payload, rich_questions, trusted_context)
             detail = (
@@ -936,9 +958,10 @@ def generate_llm_questionnaire_decisions(rich_questions: list, vacancy_title: st
             _set_llm_last_status(account_key, "questionnaire", result.provider, batch.status, detail)
             return batch
         except Exception as exc:
-            last_reason = str(exc)[:300]
-            _set_llm_last_status(account_key, "questionnaire", _provider_name(profile), "error", last_reason)
-            log_debug(f"generate_llm_questionnaire_decisions {pname}: {exc}")
+            error_detail = _safe_exception_detail(exc)
+            last_reason = f"{pname} provider error ({error_detail})"
+            _set_llm_last_status(account_key, "questionnaire", _provider_name(profile), "error", error_detail)
+            log_debug(f"generate_llm_questionnaire_decisions {pname}: {error_detail}")
 
     if not profiles and getattr(CONFIG, "llm_openclaw_enabled", False):
         prompt = _build_openclaw_prompt(

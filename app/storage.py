@@ -446,6 +446,29 @@ def get_replied_keys(since: datetime = None) -> set:
         return keys
 
 
+def get_interviews_summary(acc: str = "") -> dict:
+    """Return persisted interview counters used by the LLM review UI."""
+    _load_cache()
+    with _cache_lock:
+        items = list(_cache_interviews.values())
+    if acc:
+        items = [record for record in items if record.get("acc") == acc]
+
+    drafts = [record for record in items if record.get("status") == "draft"]
+    reviews = [
+        record for record in drafts
+        if "review" in str(record.get("llm_source") or "").lower()
+        or bool(str(record.get("llm_review_reason") or "").strip())
+    ]
+    return {
+        "total": len(items),
+        "drafts": len(drafts),
+        "reviews": len(reviews),
+        "pending": sum(record.get("status") == "pending_reply" for record in items),
+        "replied": sum(record.get("status") == "replied" for record in items),
+    }
+
+
 def get_interviews_list(acc: str = "", limit: int = 2000, status: str = "") -> list:
     """Вернуть список интервью, сортировка: pending_reply first, затем по дате desc."""
     _load_cache()

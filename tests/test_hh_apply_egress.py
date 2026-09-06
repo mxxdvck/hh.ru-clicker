@@ -377,5 +377,36 @@ def test_llm_can_fill_selection_that_template_left_unresolved(hh_no_proxy, monke
     )
 
     assert result == "sent"
-    assert info == {}
+    assert info == {
+        "questionnaire_fields": 1,
+        "questionnaire_llm_fields": 1,
+        "questionnaire_rule_fields": 0,
+    }
+    assert [method for method, _url, _kw in rec.calls] == ["GET", "POST"]
+
+def test_questionnaire_submit_info_counts_rules_without_answer_values(hh_no_proxy, monkeypatch):
+    from app.config import CONFIG
+
+    html = '<div data-qa="task-question">Why?</div><textarea name="task_1_text"></textarea>'
+    rec = _install_recorder(
+        monkeypatch,
+        get_resp=_RecResp(200, html),
+        post_resp=_RecResp(200, "{}"),
+    )
+    monkeypatch.setattr(hh_apply, "search_only_blocked", lambda: False)
+    monkeypatch.setattr(CONFIG, "questionnaire_templates", [])
+    monkeypatch.setattr(CONFIG, "llm_fill_questionnaire", False)
+    monkeypatch.setattr(CONFIG, "llm_enabled", False)
+
+    result, info = _run_coro(
+        hh_apply.fill_and_submit_questionnaire(_make_acc(), "778", "Dev", "Comp")
+    )
+
+    assert result == "sent"
+    assert info == {
+        "questionnaire_fields": 1,
+        "questionnaire_llm_fields": 0,
+        "questionnaire_rule_fields": 1,
+    }
+    assert "answer" not in info
     assert [method for method, _url, _kw in rec.calls] == ["GET", "POST"]

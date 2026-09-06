@@ -216,7 +216,7 @@ async def generate_hh_ai_letter(acc: dict, resume_hash: str, vid: str, timeout_s
             log_debug(f"hhpro_ai_letter {vid}: service_already_used — эту пару уже использовали, юзаем шаблон")
             return ""
         if r.status_code not in (200, 202):
-            log_debug(f"hhpro_ai_letter {vid}: HTTP {r.status_code}, body={r.text[:150]}")
+            log_debug(f"hhpro_ai_letter {vid}: HTTP {r.status_code}, body_len={len(r.text or '')}")
             return ""
     except Exception as e:
         log_debug(f"hhpro_ai_letter start {vid}: {e}")
@@ -362,6 +362,7 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
 
             # Парсим все поля опроса
             questions, field_answers = _parse_questionnaire_fields(html)
+            llm_resolved_fields: set[str] = set()
             rich_qs = _parse_questionnaire_rich(html)
             expected_fields = [
                 str(q.get("field") or "").strip()
@@ -432,7 +433,7 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                             if picked:
                                 validated_ans[field] = picked
                             else:
-                                log_debug(f"LLM checkbox {field}: nothing matched in {llm_val} vs {valid_values}")
+                                log_debug(f"LLM checkbox {field}: no option matched; candidates={len(valid_values)}")
                             continue
                         # Scalar option (radio/select or single checkbox value as string)
                         if not isinstance(llm_val, (str, int, float, bool)):
@@ -446,8 +447,9 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                             if fuzzy:
                                 validated_ans[field] = fuzzy[0]
                             else:
-                                log_debug(f"LLM answer '{s}' not in options {valid_values}, skipping field {field}")
+                                log_debug(f"LLM answer did not match options for {field}; candidates={len(valid_values)}")
                     accepted = [f for f in validated_ans if f in rich_fields]
+                    llm_resolved_fields.update(accepted)
                     for f in accepted:
                         field_answers[f] = validated_ans[f]
                     log_debug(
@@ -482,9 +484,20 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                     "review_reason": "one or more questionnaire fields are unresolved",
                 }
 
-            log_debug(f"Questionnaire {vid}: {len(field_answers)} fields, {len(questions)} questions")
-            for name, val in field_answers.items():
-                log_debug(f"  {name} = {str(val)[:80]}")
+            submitted_fields = set(field_answers)
+            submit_info = {
+                "questionnaire_fields": len(submitted_fields),
+                "questionnaire_llm_fields": len(submitted_fields & llm_resolved_fields),
+                "questionnaire_rule_fields": len(submitted_fields - llm_resolved_fields),
+            }
+            log_debug(
+                f"Questionnaire {vid}: {submit_info['questionnaire_fields']} fields; "
+                f"llm={submit_info['questionnaire_llm_fields']} rules={submit_info['questionnaire_rule_fields']}"
+            )
+            for name, value in field_answers.items():
+                source = "llm" if name in llm_resolved_fields else "rules"
+                value_count = len(value) if isinstance(value, list) else 1
+                log_debug(f"  field={name} source={source} values={value_count}")
 
             # Шаг 2: POST данные
             data = aiohttp.FormData()
@@ -530,14 +543,14 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                 if "withoutTest=no" in location or f"vacancyId={vid}" in location:
                     log_debug(f"Questionnaire {vid}: form rejected, redirect back")
                     return "test", {}
-                return "sent", {}
+                return "sent", submit_info
 
             if status == 200:
                 if "negotiations-limit-exceeded" in txt:
                     return "limit", {}
                 if "test-required" in txt:
                     return "test", {}
-                return "sent", {}
+                return "sent", submit_info
 
             return "error", {"http_status": status, "transient": status >= 500}
 
