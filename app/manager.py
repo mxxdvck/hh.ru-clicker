@@ -3885,7 +3885,10 @@ class BotManager:
                         log_debug(f"LLM [{state.short}] {neg_id}: пустой ответ от LLM, ставим temp_skip 30м")
                         state._llm_temp_skip[key] = time.time() + 1800
                         continue
-                    log_debug(f"LLM [{state.short}] {neg_id}: ответ получен ({len(reply_text)} симв.), отправляю")
+                    log_debug(
+                        f"LLM [{state.short}] {neg_id}: decision ready ({len(reply_text)} chars), "
+                        f"auto_send_allowed={reply_auto_send_allowed}"
+                    )
 
                 ts = datetime.now().strftime("%d.%m %H:%M")
 

@@ -153,3 +153,48 @@ def test_native_anthropic_maps_internal_json_schema_to_output_config(monkeypatch
     assert captured["request"]["json"]["output_config"] == {
         "format": {"type": "json_schema", "schema": schema}
     }
+
+
+def test_openai_transport_closes_client_on_success(monkeypatch):
+    closed = []
+
+    class Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            message = SimpleNamespace(content="ok")
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None, _request_id="req")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(provider, "_openai_client", lambda *args: Client())
+    result = provider._complete_openai(
+        _deepseek(), [{"role": "user", "content": "hi"}],
+        max_tokens=10, temperature=0.0, response_format=None, timeout_seconds=1,
+    )
+    assert result.text == "ok"
+    assert closed == [True]
+
+
+def test_openai_transport_closes_client_on_error(monkeypatch):
+    closed = []
+
+    class Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            raise RuntimeError("boom")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(provider, "_openai_client", lambda *args: Client())
+    with pytest.raises(RuntimeError, match="boom"):
+        provider._complete_openai(
+            _deepseek(), [{"role": "user", "content": "hi"}],
+            max_tokens=10, temperature=0.0, response_format=None, timeout_seconds=1,
+        )
+    assert closed == [True]

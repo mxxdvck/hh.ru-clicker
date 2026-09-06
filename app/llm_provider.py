@@ -199,16 +199,21 @@ def _complete_openai(profile: dict, messages: list[dict], *, max_tokens: int, te
     if response_format:
         kwargs["response_format"] = response_format
     started = time.perf_counter()
-    response = client.chat.completions.create(**kwargs)
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    choices = getattr(response, "choices", None) or []
-    text = str(getattr(choices[0].message, "content", "") or "").strip() if choices else ""
-    usage = getattr(response, "usage", None)
-    return LLMResult(text=text, provider=provider, profile=profile_name(profile), model=model,
-                     protocol="openai_compatible",
-                     prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
-                     completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
-                     request_id=str(getattr(response, "_request_id", "") or ""), latency_ms=latency_ms)
+    try:
+        response = client.chat.completions.create(**kwargs)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        choices = getattr(response, "choices", None) or []
+        text = str(getattr(choices[0].message, "content", "") or "").strip() if choices else ""
+        usage = getattr(response, "usage", None)
+        return LLMResult(text=text, provider=provider, profile=profile_name(profile), model=model,
+                         protocol="openai_compatible",
+                         prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+                         completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+                         request_id=str(getattr(response, "_request_id", "") or ""), latency_ms=latency_ms)
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
 
 
 def _merge_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
