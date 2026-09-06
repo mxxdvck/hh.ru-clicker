@@ -64,7 +64,8 @@ def test_phase5_legacy_tab_updates_primary_section_and_emits_event(ui):
 
     expect(page.locator("#panel-hh")).to_be_visible()
     _expect_active(page.get_by_test_id("phase5-nav-applications"))
-    event = page.wait_for_function("window.__phase5LastTabEvent !== null").json_value()
+    page.wait_for_function("window.__phase5LastTabEvent !== null")
+    event = page.evaluate("window.__phase5LastTabEvent")
     assert event["section"] == "applications"
     assert event["tab"] == "hh"
 
