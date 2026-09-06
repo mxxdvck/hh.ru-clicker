@@ -4612,6 +4612,12 @@ function updateCard(card, acc) {
       inp.onchange = () => sendCmd({type: 'set_config', key, value: parseInt(inp.value) || 0});
     }
   });
+
+  try {
+    window.dispatchEvent(new CustomEvent('hh:account-card-updated', {
+      detail: { card: card, account: acc }
+    }));
+  } catch (_) {}
 }
 
 function renderGlobalStats(snap) {

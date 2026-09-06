@@ -1294,9 +1294,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }, 15000);
 });
 </script>
-<!-- UI integrations (feat1..feat8): грузятся после app.js и inline WS-скрипта.
-     Каждая фича самодостаточна: обёртки глобальных функций app.js + динамический
-     DOM-инжект, guard'ы от двойного оборачивания. -->
+<!-- UI integrations (feat1..feat8): loaded after app.js and the inline WS bridge.
+     Phase 5 migrates these modules from global render monkey-patches to explicit UI events. -->
 <script src="/static/js/features/feat1_hr_badge.js?v=1"></script>
 <script src="/static/js/features/feat2_preflight.js?v=1"></script>
 <script src="/static/js/features/feat3_skills.js?v=1"></script>
