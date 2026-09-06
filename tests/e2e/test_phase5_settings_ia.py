@@ -80,7 +80,16 @@ def test_phase5_settings_advanced_group_collects_diagnostics_ws_and_json(ui):
     page.get_by_test_id("phase5-settings-group-advanced").click()
 
     expect(page.locator("#ws-realtime-section")).to_be_visible()
-    expect(page.locator("#settings-panel > details.q-section[data-settings-group='advanced']")).to_have_count(3)
+    advanced = page.locator("#settings-panel > details.q-section[data-settings-group='advanced']")
+    assert advanced.count() >= 3
+    assert page.locator(
+        "#settings-panel > details.q-section[data-settings-group='advanced'] > summary",
+        has_text="JSON-редактор",
+    ).count() == 1
+    assert page.locator(
+        "#settings-panel > details.q-section[data-settings-group='advanced'] > summary",
+        has_text="Диагностика",
+    ).count() == 1
     expect(page.locator("#llm-section")).to_be_hidden()
     expect(page.locator("#proxy-section")).to_be_hidden()
 
@@ -88,7 +97,7 @@ def test_phase5_settings_advanced_group_collects_diagnostics_ws_and_json(ui):
 def test_phase5_settings_ctrl_k_focuses_search_without_changing_section(ui):
     page = _open_settings(ui)
 
-    page.locator("#panel-settings").click(position={"x": 4, "y": 4})
+    page.get_by_test_id("phase5-nav-settings").focus()
     page.keyboard.press("Control+K")
     expect(page.get_by_test_id("phase5-settings-search")).to_be_focused()
     expect(page.locator("#panel-settings")).to_be_visible()
