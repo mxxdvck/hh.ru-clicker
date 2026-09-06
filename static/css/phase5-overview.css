@@ -1,0 +1,278 @@
+/* Project Phase 5D: operational overview + action center. */
+.phase5-overview {
+  margin-bottom: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.phase5-overview-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card2);
+}
+
+.phase5-overview-title {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text);
+}
+
+.phase5-overview-subtitle {
+  margin-top: 3px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.phase5-mode-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.phase5-mode-badge[data-kind="search"] {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+.phase5-mode-badge[data-kind="paused"] {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.phase5-mode-badge[data-kind="active"] {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.phase5-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.phase5-kpi-card {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-card);
+}
+
+.phase5-kpi-label {
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.phase5-kpi-value {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.1;
+}
+
+.phase5-kpi-note {
+  min-height: 14px;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.phase5-overview-columns {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(420px, 1.4fr);
+  gap: 12px;
+}
+
+.phase5-overview-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card2);
+}
+
+.phase5-overview-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.phase5-overview-card-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.phase5-overview-count {
+  min-width: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--dim);
+  text-align: center;
+  font-size: 10px;
+}
+
+.phase5-attention-list,
+.phase5-health-list {
+  display: grid;
+  gap: 7px;
+}
+
+.phase5-attention-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.phase5-severity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+.phase5-attention-item[data-severity="high"] .phase5-severity-dot { background: var(--red); }
+.phase5-attention-item[data-severity="warning"] .phase5-severity-dot { background: var(--yellow); }
+.phase5-attention-item[data-severity="info"] .phase5-severity-dot { background: var(--cyan); }
+
+.phase5-attention-title {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.phase5-attention-reason {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.phase5-action-btn {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cyan);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+}
+
+.phase5-action-btn:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.phase5-overview-empty {
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.phase5-health-card {
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.phase5-health-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.phase5-health-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase5-health-state {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.phase5-health-state[data-state="ok"] { color: var(--green); }
+.phase5-health-state[data-state="warning"] { color: var(--yellow); }
+.phase5-health-state[data-state="error"] { color: var(--red); }
+
+.phase5-health-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 7px;
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.phase5-health-meta strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.phase5-overview .phase5-unknown {
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+  .phase5-kpi-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  .phase5-overview-columns { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .phase5-overview-top { display: block; padding: 12px; }
+  .phase5-mode-badge { margin-top: 9px; }
+  .phase5-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .phase5-overview-card { padding: 11px; }
+  .phase5-attention-item { grid-template-columns: 8px minmax(0, 1fr); }
+  .phase5-attention-item .phase5-action-btn { grid-column: 2; justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase5-overview *,
+  .phase5-overview *::before,
+  .phase5-overview *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
