@@ -88,11 +88,7 @@
     cb.addEventListener('change', function () {
       safe(function () {
         if (typeof window.sendCmd === 'function') {
-          window.sendCmd({
-            type: 'set_config',
-            key: 'use_websocket_realtime',
-            value: cb.checked
-          });
+          window.sendCmd({ type:'set_config', key:'use_websocket_realtime', value:cb.checked });
         }
       }, null);
     });
@@ -108,7 +104,6 @@
     label.appendChild(cb);
     label.appendChild(text);
     label.appendChild(hint);
-
     var btn = block.querySelector('button');
     if (btn && btn.parentElement === block) block.insertBefore(label, btn);
     else block.appendChild(label);
@@ -116,18 +111,11 @@
   }
 
   var PHASE5_TEST_IDS = {
-    'pause-btn': 'global-pause',
-    'apply-mode-badge': 'apply-mode',
-    'search-only-mode': 'search-only-mode',
-    'daily-apply-limit': 'daily-apply-limit',
-    'run-apply-limit': 'run-apply-limit',
-    'use-oauth-apply': 'use-oauth-apply',
-    'auto-apply-tests': 'auto-apply-tests',
-    'llm-auto-send': 'llm-auto-send',
-    'apply-account': 'apply-account',
-    'apply-vacancy': 'apply-vacancy',
-    'apply-result': 'apply-result',
-    'apply-questionnaire': 'apply-questionnaire'
+    'pause-btn':'global-pause', 'apply-mode-badge':'apply-mode', 'search-only-mode':'search-only-mode',
+    'daily-apply-limit':'daily-apply-limit', 'run-apply-limit':'run-apply-limit',
+    'use-oauth-apply':'use-oauth-apply', 'auto-apply-tests':'auto-apply-tests',
+    'llm-auto-send':'llm-auto-send', 'apply-account':'apply-account', 'apply-vacancy':'apply-vacancy',
+    'apply-result':'apply-result', 'apply-questionnaire':'apply-questionnaire'
   };
 
   function syncTabAria() {
@@ -143,7 +131,6 @@
     if (!tabsRoot) return;
     tabsRoot.setAttribute('role', 'tablist');
     tabsRoot.setAttribute('aria-label', 'Основная навигация');
-
     var tabs = tabsRoot.querySelectorAll('.tab[data-tab]');
     for (var i = 0; i < tabs.length; i++) {
       var tab = tabs[i];
@@ -154,26 +141,17 @@
       tab.setAttribute('data-testid', 'legacy-tab-' + name);
     }
     syncTabAria();
-
     if (tabsRoot.dataset.phase5KeyboardBound === '1') return;
     tabsRoot.dataset.phase5KeyboardBound = '1';
-
-    tabsRoot.addEventListener('click', function () {
-      window.requestAnimationFrame(syncTabAria);
-    });
-
+    tabsRoot.addEventListener('click', function () { window.requestAnimationFrame(syncTabAria); });
     tabsRoot.addEventListener('keydown', function (event) {
-      var tab = event.target && event.target.closest
-        ? event.target.closest('.tab[data-tab]')
-        : null;
+      var tab = event.target && event.target.closest ? event.target.closest('.tab[data-tab]') : null;
       if (!tab) return;
-
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
         tab.click();
         return;
       }
-
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault();
       var items = Array.prototype.slice.call(tabsRoot.querySelectorAll('.tab[data-tab]'));
@@ -188,8 +166,8 @@
 
   function addCriticalTestIds() {
     Object.keys(PHASE5_TEST_IDS).forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.setAttribute('data-testid', PHASE5_TEST_IDS[id]);
+      var node = document.getElementById(id);
+      if (node) node.setAttribute('data-testid', PHASE5_TEST_IDS[id]);
     });
   }
 
@@ -205,7 +183,7 @@
       if (!snap && typeof State !== 'undefined' && State) snap = State.lastSnapshot;
       if (!snap) return;
       if (window.HHUI && HHUI.core && typeof HHUI.core.emit === 'function') {
-        HHUI.core.emit('hh:snapshot', { snapshot: snap });
+        HHUI.core.emit('hh:snapshot', { snapshot:snap });
       }
     }, null);
   }
@@ -224,18 +202,15 @@
       var existing = document.getElementById(id);
       if (existing) {
         if (existing.dataset.loaded === '1') resolve();
-        else existing.addEventListener('load', resolve, { once: true });
+        else existing.addEventListener('load', resolve, { once:true });
         return;
       }
       var script = document.createElement('script');
       script.id = id;
       script.src = src;
       script.defer = true;
-      script.addEventListener('load', function () {
-        script.dataset.loaded = '1';
-        resolve();
-      }, { once: true });
-      script.addEventListener('error', function () { reject(new Error('asset load failed: ' + src)); }, { once: true });
+      script.addEventListener('load', function () { script.dataset.loaded = '1'; resolve(); }, { once:true });
+      script.addEventListener('error', function () { reject(new Error('asset load failed: ' + src)); }, { once:true });
       document.body.appendChild(script);
     });
   }
@@ -243,12 +218,8 @@
   function loadPhase5Ui() {
     ensureStylesheet('phase5-shell-css', '/static/css/phase5-shell.css');
     return loadScriptOnce('phase5-ui-core-script', '/static/js/ui/core.js')
-      .then(function () {
-        return loadScriptOnce('phase5-ui-navigation-script', '/static/js/ui/navigation.js');
-      })
-      .catch(function (error) {
-        console.error('Phase5 UI bootstrap:', error);
-      });
+      .then(function () { return loadScriptOnce('phase5-ui-navigation-script', '/static/js/ui/navigation.js'); })
+      .catch(function (error) { console.error('Phase5 UI bootstrap:', error); });
   }
 
   wrapGlobal('wsFetchStatus', function (orig) {
@@ -275,21 +246,16 @@
       var res = orig.apply(this, arguments);
       safe(syncGlobalCheckbox, null);
       safe(syncTabAria, null);
-      emitPhase5Snapshot();
       return res;
     };
   });
 
   window.WsToggle = {
-    refresh: function (btn) {
-      return typeof window.wsRefresh === 'function' ? window.wsRefresh(btn) : undefined;
+    refresh:function (btn) { return typeof window.wsRefresh === 'function' ? window.wsRefresh(btn) : undefined; },
+    getStatus:function () {
+      return typeof window.wsFetchStatus === 'function' ? window.wsFetchStatus() : Promise.resolve({ ok:false, error:'wsFetchStatus недоступен' });
     },
-    getStatus: function () {
-      return typeof window.wsFetchStatus === 'function'
-        ? window.wsFetchStatus()
-        : Promise.resolve({ ok: false, error: 'wsFetchStatus недоступен' });
-    },
-    syncSnapshot: function (snapshot) {
+    syncSnapshot:function (snapshot) {
       safe(function () { syncGlobalCheckbox(snapshot); }, null);
       safe(syncTabAria, null);
       emitPhase5Snapshot(snapshot);
@@ -303,9 +269,6 @@
     safe(function () { loadPhase5Ui(); }, null);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once:true });
+  else init();
 })();
