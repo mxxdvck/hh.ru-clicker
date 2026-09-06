@@ -167,3 +167,59 @@ def test_experience_answer_needs_more_than_generic_matching_evidence():
     )
     assert d.auto_send_allowed is False
     assert "grounded" in d.reason
+
+
+def test_work_format_question_does_not_accept_location_as_evidence():
+    d = policy.evaluate_reply_decision(
+        _decision(
+            answer="Yes, office works for me.",
+            category="schedule",
+            evidence=["location: Moscow"],
+        ),
+        employer_text="Are you comfortable working from the office?",
+        trusted_context="location: Moscow",
+    )
+    assert d.auto_send_allowed is False
+    assert "category" in d.reason
+
+
+def test_numeric_claims_do_not_concatenate_unrelated_trusted_numbers():
+    d = policy.evaluate_reply_decision(
+        _decision(
+            answer="I have 13 years of ERP experience.",
+            category="experience",
+            evidence=["ERP integrations"],
+        ),
+        employer_text="How many years of ERP experience do you have?",
+        trusted_context="Built ERP integrations for 1C across 3 projects.",
+    )
+    assert d.auto_send_allowed is False
+    assert "numeric" in d.reason
+
+
+def test_experience_duration_cannot_reuse_project_count():
+    d = policy.evaluate_reply_decision(
+        _decision(
+            answer="I have 3 years of ERP experience.",
+            category="experience",
+            evidence=["ERP integrations"],
+        ),
+        employer_text="How many years of ERP experience do you have?",
+        trusted_context="Built ERP integrations across 3 projects.",
+    )
+    assert d.auto_send_allowed is False
+    assert "duration" in d.reason
+
+
+def test_spelled_out_experience_duration_requires_matching_duration_fact():
+    d = policy.evaluate_reply_decision(
+        _decision(
+            answer="I have three years of ERP experience.",
+            category="experience",
+            evidence=["ERP integrations"],
+        ),
+        employer_text="How many years of ERP experience do you have?",
+        trusted_context="Built ERP integrations across three projects.",
+    )
+    assert d.auto_send_allowed is False
+    assert "duration" in d.reason

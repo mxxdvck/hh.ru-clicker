@@ -137,10 +137,10 @@ def _evidence_prefixes_for(category: str, employer_text: str) -> tuple[str, ...]
         if any(marker in text for marker in _TIMEZONE_MARKERS):
             return ("timezone:",)
         if any(marker in text for marker in _WORK_FORMAT_MARKERS):
-            return ("work_format:", "location:")
+            return ("work_format:",)
         if any(marker in text for marker in _SCHEDULE_MARKERS):
             return ("schedule:",)
-        return ("schedule:", "timezone:", "work_format:", "location:")
+        return ("schedule:", "timezone:", "work_format:")
     return ()
 
 
@@ -282,14 +282,45 @@ def _profile_value_consistent(answer: str, evidence: list[str], category: str, e
     return any_match
 
 
+_NUMERIC_CLAIM_RE = re.compile(r"(?<![\w])\d+(?:(?:[ \u00a0]\d{3})+|(?:[.,]\d+))?(?![\w])")
+_DURATION_RE = re.compile(
+    r"\b(?P<num>\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s*"
+    r"(?P<unit>years?|yrs?|год|года|лет)\b",
+    flags=re.I,
+)
+_DURATION_WORDS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "один": "1", "одна": "1", "два": "2", "две": "2", "три": "3",
+    "четыре": "4", "пять": "5", "шесть": "6", "семь": "7",
+    "восемь": "8", "девять": "9", "десять": "10",
+}
+
+
+def _normalize_numeric_claim(value: str) -> str:
+    return str(value or "").replace(" ", "").replace("\u00a0", "").replace(",", ".")
+
+
 def _numeric_claims_supported(answer: str, trusted_context: str) -> bool:
-    claims = re.findall(r"(?<![\w])\d+(?:[ \u00a0.,]\d+)*(?![\w])", str(answer or ""))
-    trusted_digits = re.sub(r"\D", "", str(trusted_context or ""))
-    for claim in claims:
-        digits = re.sub(r"\D", "", claim)
-        if digits and digits not in trusted_digits:
-            return False
-    return True
+    claims = {_normalize_numeric_claim(value) for value in _NUMERIC_CLAIM_RE.findall(str(answer or ""))}
+    trusted = {_normalize_numeric_claim(value) for value in _NUMERIC_CLAIM_RE.findall(str(trusted_context or ""))}
+    return claims <= trusted
+
+
+def _duration_claims(text: str) -> set[str]:
+    claims = set()
+    for match in _DURATION_RE.finditer(str(text or "")):
+        raw = match.group("num").casefold()
+        number = _DURATION_WORDS.get(raw, _normalize_numeric_claim(raw))
+        if number:
+            claims.add(number)
+    return claims
+
+
+def _duration_claims_supported(answer: str, trusted_context: str) -> bool:
+    claims = _duration_claims(answer)
+    return not claims or claims <= _duration_claims(trusted_context)
 
 
 def _general_answer_needs_evidence(answer: str) -> bool:
@@ -380,6 +411,10 @@ def evaluate_reply_decision(data: dict, *, employer_text: str, trusted_context: 
         if not _numeric_claims_supported(answer, trusted_context):
             decision.action = "review"
             decision.reason = "generated answer contains an unsupported numeric claim"
+            return decision
+        if category == "experience" and not _duration_claims_supported(answer, trusted_context):
+            decision.action = "review"
+            decision.reason = "experience duration claim is not supported by trusted facts"
             return decision
         if category == "experience" and not _factual_claim_grounded(answer, trusted_context):
             decision.action = "review"
@@ -517,6 +552,9 @@ def evaluate_questionnaire_field(data: dict, *, question: dict, trusted_context:
             return decision
         if not _numeric_claims_supported(combined_answer, trusted_context):
             decision.reason = reason or "questionnaire answer contains an unsupported numeric claim"
+            return decision
+        if category == "experience" and not _duration_claims_supported(combined_answer, trusted_context):
+            decision.reason = "questionnaire experience duration claim is not supported by trusted facts"
             return decision
         if category == "experience" and not _factual_claim_grounded(combined_answer, trusted_context):
             decision.reason = "questionnaire experience claim is not sufficiently grounded in trusted facts"

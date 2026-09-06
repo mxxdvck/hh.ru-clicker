@@ -163,3 +163,27 @@ def test_questionnaire_experience_needs_grounded_claim(monkeypatch):
     )
     assert batch.status == "review"
     assert batch.review_fields == ["experience"]
+
+
+def test_questionnaire_experience_duration_cannot_reuse_project_count():
+    question = {
+        "field": "task_1_text",
+        "type": "textarea",
+        "text": "How many years of ERP experience do you have?",
+        "options": [],
+    }
+    decision = policy.evaluate_questionnaire_field(
+        {
+            "field": "task_1_text",
+            "values": ["I have 3 years of ERP experience."],
+            "confidence": 0.99,
+            "category": "experience",
+            "evidence": ["ERP integrations"],
+            "missing_facts": [],
+            "reason": "",
+        },
+        question=question,
+        trusted_context="Built ERP integrations across 3 projects.",
+    )
+    assert decision.auto_fill_allowed is False
+    assert "duration" in decision.reason
