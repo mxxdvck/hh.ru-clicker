@@ -99,7 +99,7 @@
 
     var dailyUsed = sumKnown(accounts, 'daily_sent');
     var dailyPerAccount = number(config.daily_apply_limit);
-    var dailyEffective = dailyPerAccount !== null && dailyPerAccount > 0
+    var dailyEffective = accounts.length && dailyPerAccount !== null && dailyPerAccount > 0
       ? dailyPerAccount * accounts.length
       : null;
     var dailyRemaining = dailyEffective !== null && dailyUsed !== null
@@ -108,7 +108,7 @@
 
     var runUsed = sumKnown(accounts, 'sent');
     var runPerAccount = number(config.run_apply_limit);
-    var runEffective = runPerAccount !== null && runPerAccount > 0
+    var runEffective = accounts.length && runPerAccount !== null && runPerAccount > 0
       ? runPerAccount * accounts.length
       : null;
 
@@ -126,22 +126,26 @@
       {
         id: 'today',
         label: 'Отклики сегодня',
-        value: dailyUsed === null ? null : dailyUsed,
-        note: dailyPerAccount && accounts.length
+        value: dailyUsed,
+        note: dailyPerAccount !== null && dailyPerAccount > 0 && accounts.length
           ? 'лимит ' + dailyPerAccount + ' на аккаунт'
-          : 'лимит не задан'
+          : (accounts.length ? 'лимит не задан' : 'нет подключённых аккаунтов')
       },
       {
         id: 'remaining',
         label: 'Осталось сегодня',
-        value: dailyPerAccount && accounts.length ? dailyRemaining : 'Без лимита',
+        value: !accounts.length
+          ? null
+          : (dailyPerAccount !== null && dailyPerAccount > 0 ? dailyRemaining : 'Без лимита'),
         note: dailyEffective !== null ? 'общий доступный лимит ' + dailyEffective : ''
       },
       {
         id: 'run',
         label: 'Этот запуск',
         value: runUsed,
-        note: runEffective !== null ? 'лимит запуска ' + runEffective : 'без лимита запуска'
+        note: !accounts.length
+          ? 'нет подключённых аккаунтов'
+          : (runEffective !== null ? 'лимит запуска ' + runEffective : 'без лимита запуска')
       },
       {
         id: 'found',
@@ -185,25 +189,43 @@
     return { kind: 'active', text: '● Отклики разрешены' };
   }
 
+  function legacyNavigate(tab) {
+    var legacy = document.querySelector('#tabs .tab[data-tab="' + tab + '"]');
+    if (legacy) legacy.click();
+  }
+
   function navigate(section, tab) {
     if (HHUI.navigation && typeof HHUI.navigation.navigate === 'function') {
       HHUI.navigation.navigate(section, tab || null, { source: 'overview-action' });
+      return;
+    }
+    if (tab) legacyNavigate(tab);
+  }
+
+  function configureSettings(group, sectionId, attempt) {
+    var tries = Number(attempt) || 0;
+    if (!HHUI.settings || typeof HHUI.settings.setGroup !== 'function') {
+      if (tries < 10) {
+        window.setTimeout(function () { configureSettings(group, sectionId, tries + 1); }, 25);
+      }
+      return;
+    }
+    HHUI.settings.setGroup(group || 'all');
+    if (sectionId) {
+      var target = document.getElementById(sectionId);
+      if (target) {
+        target.hidden = false;
+        if ('open' in target) target.open = true;
+        target.scrollIntoView({ block: 'start' });
+      }
     }
   }
 
   function openSettings(group, sectionId) {
     navigate('settings', 'settings');
-    window.setTimeout(function () {
-      if (HHUI.settings && typeof HHUI.settings.setGroup === 'function') HHUI.settings.setGroup(group || 'all');
-      if (sectionId) {
-        var target = document.getElementById(sectionId);
-        if (target) {
-          target.hidden = false;
-          if ('open' in target) target.open = true;
-          target.scrollIntoView({ block: 'start' });
-        }
-      }
-    }, 0);
+    var settingsPanel = document.getElementById('panel-settings');
+    if (settingsPanel && !settingsPanel.classList.contains('active')) legacyNavigate('settings');
+    window.setTimeout(function () { configureSettings(group, sectionId, 0); }, 0);
   }
 
   function attentionItems(snapshot) {
@@ -302,12 +324,17 @@
     });
 
     var weight = { high: 0, warning: 1, info: 2 };
-    items.sort(function (a, b) { return (weight[a.severity] || 9) - (weight[b.severity] || 9); });
+    function rank(severity) {
+      return Object.prototype.hasOwnProperty.call(weight, severity) ? weight[severity] : 9;
+    }
+    items.sort(function (a, b) { return rank(a.severity) - rank(b.severity); });
     return items;
   }
 
   function scrollToLegacyAccount(idx) {
     navigate('overview', 'main');
+    var mainPanel = document.getElementById('panel-main');
+    if (mainPanel && !mainPanel.classList.contains('active')) legacyNavigate('main');
     window.setTimeout(function () {
       var target = document.getElementById('card-' + idx);
       if (target) target.scrollIntoView({ block: 'center' });
@@ -426,13 +453,14 @@
       var dailySent = number(account.daily_sent);
       var dailyLimit = number(config.daily_apply_limit);
       var remaining = dailyLimit && dailySent !== null ? Math.max(0, dailyLimit - dailySent) : null;
+      var wsState = account.ws_status || (config.use_websocket_realtime ? 'включён глобально' : 'выкл');
       var meta = el('div', 'phase5-health-meta');
       [
         ['Режим', mode],
         ['Сегодня', dailySent === null ? 'нет данных' : dailySent + (dailyLimit ? ' / ' + dailyLimit : '')],
         ['Осталось', remaining === null ? (dailyLimit ? 'нет данных' : 'без лимита') : remaining],
         ['OAuth', oauth.has_token ? 'есть' : 'нет'],
-        ['WS', account.ws_status || 'по статусу ниже'],
+        ['WS', wsState],
         ['Ошибки подряд', number(account.consecutive_errors) === null ? 'нет данных' : account.consecutive_errors]
       ].forEach(function (pair) {
         var span = el('span');
