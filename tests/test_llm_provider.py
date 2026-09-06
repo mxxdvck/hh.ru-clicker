@@ -153,6 +153,8 @@ def test_native_anthropic_maps_internal_json_schema_to_output_config(monkeypatch
     assert captured["request"]["json"]["output_config"] == {
         "format": {"type": "json_schema", "schema": schema}
     }
+    assert "temperature" not in captured["request"]["json"]
+
 
 
 def test_openai_transport_closes_client_on_success(monkeypatch):
@@ -198,3 +200,50 @@ def test_openai_transport_closes_client_on_error(monkeypatch):
             max_tokens=10, temperature=0.0, response_format=None, timeout_seconds=1,
         )
     assert closed == [True]
+
+
+
+def test_anthropic_haiku_45_keeps_temperature_control():
+    assert provider._anthropic_uses_fixed_sampling("claude-haiku-4-5-20251001") is False
+    assert provider._anthropic_uses_fixed_sampling("claude-opus-4-6") is False
+    assert provider._anthropic_uses_fixed_sampling("claude-opus-4-7") is True
+    assert provider._anthropic_uses_fixed_sampling("claude-opus-5") is True
+    assert provider._anthropic_uses_fixed_sampling("claude-fable-5-1") is True
+    assert provider._anthropic_uses_fixed_sampling("claude-mythos-5") is True
+
+
+def test_retired_gemini_model_warning():
+    retired = {
+        "name": "Gemini",
+        "api_key": "test",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "model": "gemini-2.0-flash",
+    }
+    current = {**retired, "model": "gemini-3.8-flash"}
+    assert "retired" in provider.model_warning(retired).lower()
+    assert "gemini-3.8-flash" in provider.model_warning(retired)
+    assert provider.model_warning(current) == ""
+
+def test_groq_enterprise_model_warning_recommends_gpt_oss():
+    retired = {
+        "name": "Groq",
+        "api_key": "test",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "llama-3.3-70b-versatile",
+    }
+    warning = provider.model_warning(retired).lower()
+    assert "enterprise" in warning
+    assert "openai/gpt-oss-120b" in warning
+
+
+def test_groq_gpt_oss_supports_json_schema():
+    profile = {
+        "name": "Groq",
+        "api_key": "test",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "openai/gpt-oss-120b",
+    }
+    caps = provider.provider_capabilities(profile)
+    assert caps.json_object is True
+    assert caps.json_schema is True
+

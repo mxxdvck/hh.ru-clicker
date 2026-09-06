@@ -179,6 +179,34 @@ def _fingerprint_key(key: str) -> str:
         return f"••• ({len(s)} симв.)"
     return f"{s[:4]}…{s[-4:]} ({len(s)} симв.)"
 
+
+def _select_quick_reply(replies: list, employer_text: str) -> str:
+    values = [str(item or "").strip() for item in (replies or []) if str(item or "").strip()]
+    if not values:
+        return ""
+    is_question = "?" in str(employer_text or "")
+    greetings = ("здравствуйте", "добрый день", "добрый вечер", "приветствую")
+
+    def score(value: str):
+        low = value.lower()
+        greeting_only = len(value) < 25 and any(greeting in low for greeting in greetings)
+        return (0 if (is_question and greeting_only) else 1, len(value))
+
+    best = max(values, key=score)
+    return best if len(best) >= (20 if is_question else 5) else ""
+
+
+def _llm_delivery_mode(*, auto_send: bool, auto_send_allowed: bool, search_only: bool) -> str:
+    """Classify one generated reply without conflating drafts, review and sending."""
+    if search_only:
+        return "search_only"
+    if not auto_send:
+        return "draft"
+    if not auto_send_allowed:
+        return "review"
+    return "send"
+
+
 from app.config import (
     CONFIG, accounts_data,
     save_config, load_config, save_accounts, load_accounts,
@@ -3508,6 +3536,7 @@ class BotManager:
                 break
             # Reset per-iteration: иначе exception на новой итерации видит global_key из ПРЕДЫДУЩЕЙ.
             global_key = None
+            iteration_failed = False
             try:
                 if neg_id in state._llm_no_chat:
                     item = items_by_id.get(neg_id, {})
@@ -3814,6 +3843,8 @@ class BotManager:
                     log_debug(f"LLM [{state.short}] {neg_id}: уже есть черновик в кэше, auto_send выкл — пропуск")
                     continue
                 reply_source = "llm"
+                reply_category = ""
+                reply_review_reason = ""
                 reply_auto_send_allowed = False
                 reply_text = ""
                 hr_last = (employer_msg or "").strip()
@@ -3829,17 +3860,12 @@ class BotManager:
                 if not _has_own_llm and getattr(CONFIG, "llm_use_quick_replies", True):
                     qr = get_client(state.acc).fetch_quick_replies(neg_id, last_msg_id)
                     if qr:
-                        is_question = "?" in hr_last
-                        _greet = ("здравствуйте", "добрый день", "добрый вечер", "приветствую")
-                        def _score(s):
-                            value = str(s or "").strip()
-                            value_low = value.lower()
-                            is_greet = len(value) < 25 and any(g in value_low for g in _greet)
-                            return (0 if (is_question and is_greet) else 1, len(value))
-                        best = max(qr, key=_score)
-                        if len(best) >= (20 if is_question else 5):
+                        best = _select_quick_reply(qr, hr_last)
+                        if best:
                             reply_text = best
                             reply_source = "quick_reply_review"
+                            reply_category = "quick_reply"
+                            reply_review_reason = "predefined quick reply requires human review"
                 if _has_own_llm:
                     log_debug(f"LLM [{state.short}] {neg_id}: generating structured Phase 4 decision")
                     ai_hint = bool(state.vacancy_meta.get(vacancy_id, {}).get("ai_assistant_enabled"))
@@ -3852,6 +3878,8 @@ class BotManager:
                         ai_screener_hint=ai_hint,
                     )
                     reply_text = decision.answer
+                    reply_category = decision.category
+                    reply_review_reason = decision.reason
                     reply_auto_send_allowed = bool(decision.auto_send_allowed)
                     reply_source = "llm_auto_safe" if reply_auto_send_allowed else "llm_review"
                     if reply_text and not reply_auto_send_allowed:
@@ -3865,16 +3893,12 @@ class BotManager:
                         # LLM молчит (rate-limit / down) — попробуем quick_replies как последний резерв.
                         qr = get_client(state.acc).fetch_quick_replies(neg_id, last_msg_id)
                         if qr:
-                            is_question = "?" in hr_last
-                            _greet = ("здравствуйте", "добрый день", "добрый вечер", "приветствую")
-                            def _score2(s):
-                                s_low = s.strip().lower()
-                                is_greet = len(s) < 25 and any(g in s_low for g in _greet)
-                                return (0 if (is_question and is_greet) else 1, len(s))
-                            best = max(qr, key=_score2)
-                            if len(best) >= (20 if is_question else 5):
+                            best = _select_quick_reply(qr, hr_last)
+                            if best:
                                 reply_text = best
                                 reply_source = "quick_reply_fallback_review"
+                                reply_category = "quick_reply"
+                                reply_review_reason = "fallback quick reply requires human review"
                                 log_debug(f"LLM [{state.short}] {neg_id}: LLM молчит, взял quick_reply '{reply_text[:40]}…'")
                     if not reply_text:
                         llm_status = get_llm_last_status(f"{state.short}:{neg_id}", "reply")
@@ -3891,8 +3915,13 @@ class BotManager:
                     )
 
                 ts = datetime.now().strftime("%d.%m %H:%M")
+                delivery_mode = _llm_delivery_mode(
+                    auto_send=bool(CONFIG.llm_auto_send),
+                    auto_send_allowed=bool(reply_auto_send_allowed),
+                    search_only=bool(CONFIG.search_only_mode),
+                )
 
-                if CONFIG.llm_auto_send and reply_auto_send_allowed and not CONFIG.search_only_mode:
+                if delivery_mode == "send":
                     with self._llm_sent_lock:
                         if global_key in self._llm_sent_global:
                             log_debug(f"LLM [{state.short}] {neg_id}: другой поток уже отправил (pid={cur_pid}), пропуск")
@@ -3939,7 +3968,8 @@ class BotManager:
                         replied += 1
                         upsert_interview(neg_id, acc=state.short, acc_color=state.color,
                                          llm_reply=reply_text, llm_sent=True,
-                                         replied_msg_id=last_msg_id)
+                                         replied_msg_id=last_msg_id, llm_source=reply_source,
+                                         llm_category=reply_category, llm_review_reason="")
                         self._add_log(state.short, state.color,
                             f"\U0001f916 Авто-ответ → {employer}: {reply_text[:60]}…", "success", neg_id=neg_id)
                         self._push_llm_log({
@@ -3984,23 +4014,40 @@ class BotManager:
                             "source": "draft_error",
                         })
                 else:
-                    # auto_send=False — сохраняем черновик в кэш чтобы при включении
-                    # auto_send отправить без повторного LLM-вызова.
+                    # Нельзя сваливать manual draft, policy review и search-only в
+                    # одно состояние: только manual draft может стать кандидатом на
+                    # повторную проверку после включения Auto safe.
+                    if delivery_mode == "review":
+                        draft_log = f"Черновик требует проверки [{employer}] (Auto safe не отправил)"
+                        draft_source = reply_source or "llm_review"
+                        state._llm_temp_skip[key] = time.time() + 1800
+                    elif delivery_mode == "search_only":
+                        draft_log = f"Черновик [{employer}] (search-only: отправка заблокирована)"
+                        draft_source = "search_only_draft"
+                        state._llm_temp_skip[key] = time.time() + 1800
+                    else:
+                        draft_log = (
+                            f"Черновик [{employer}] (Auto safe выключен; "
+                            "при включении ответ будет заново проверен)"
+                        )
+                        draft_source = "draft_manual"
                     with state._llm_drafts_lock:
                         state._llm_drafts[key] = reply_text
-                    # НЕ помечаем llm_replied_msgs[key]=None — иначе при флипе auto_send
-                    # бот посчитает чат «уже обработан» и пропустит. Без этой метки
-                    # следующий цикл увидит чат, найдёт черновик в кэше и (если
-                    # auto_send=True) отправит.
                     upsert_interview(neg_id, acc=state.short, acc_color=state.color,
-                                     llm_reply=reply_text, llm_sent=False)
-                    self._add_log(state.short, state.color,
-                        f"\U0001f916 Черновик [{employer}] (вкл «Автоотправку» → отправлю): {reply_text[:60]}…", "info", neg_id=neg_id)
+                                     llm_reply=reply_text, llm_sent=False, llm_source=draft_source,
+                                     llm_category=reply_category,
+                                     llm_review_reason=reply_review_reason if delivery_mode == "review" else "")
+                    self._add_log(
+                        state.short, state.color,
+                        f"\U0001f916 {draft_log}: {reply_text[:60]}…",
+                        "warning" if delivery_mode == "review" else "info",
+                        neg_id=neg_id,
+                    )
                     self._push_llm_log({
                         "time": ts, "acc": state.short, "color": state.color,
                         "employer": employer, "vacancy_title": vacancy_title,
                         "neg_id": neg_id, "vacancy_id": vacancy_id, "employer_msg": employer_msg,
-                        "bot_reply": reply_text, "sent": False,
+                        "bot_reply": reply_text, "sent": False, "source": draft_source,
                     })
                     self._persist_llm_log({
                         "time": datetime.now().isoformat(timespec="seconds"),
@@ -4010,11 +4057,12 @@ class BotManager:
                         "employer": employer,
                         "reply_len": len(reply_text),
                         "send_ok": False,
-                        "source": "draft_manual",
+                        "source": draft_source,
                     })
 
                 time.sleep(3)  # rate limit between messages
             except Exception as e:
+                iteration_failed = True
                 log_exception(f"_process_llm_replies {neg_id}", e)
             finally:
                 # Аудит 2026-08-17 #34: pending_chats раньше держал начальное
@@ -4035,13 +4083,14 @@ class BotManager:
                                     self._llm_sent_by_neg_id.pop(neg_id, None)
                 except Exception:
                     pass
-                # Backoff at chat-level: предотвращает бесконечный retry перманентной ошибки.
-                # 1 ошибка → 5 мин, 2 → 15 мин, 3-5 → 1 час, после 5 → 24 часа (но не permanent —
-                # _llm_no_chat зарезервирован под реальный 409, чтобы не путать).
-                fail_count = state._llm_neg_failures.get(neg_id, 0) + 1
-                state._llm_neg_failures[neg_id] = fail_count
-                backoff = {1: 300, 2: 900, 3: 3600, 4: 3600, 5: 3600}.get(fail_count, 86400)
-                state._llm_temp_skip[(neg_id, "exception")] = time.time() + backoff
+                if iteration_failed:
+                    # Backoff at chat-level applies only to an actual exception.
+                    # Successful sends, drafts and policy-review outcomes must not
+                    # poison the chat with a fake failure counter.
+                    fail_count = state._llm_neg_failures.get(neg_id, 0) + 1
+                    state._llm_neg_failures[neg_id] = fail_count
+                    backoff = {1: 300, 2: 900, 3: 3600, 4: 3600, 5: 3600}.get(fail_count, 86400)
+                    state._llm_temp_skip[(neg_id, "exception")] = time.time() + backoff
 
         state.llm_replied_count += replied
         if replied:

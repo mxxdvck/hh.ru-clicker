@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import random
+import re
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -24,6 +25,12 @@ except ImportError:  # pragma: no cover
 
 
 _DEEPSEEK_RETIRED_MODELS = {"deepseek-chat", "deepseek-reasoner"}
+_GEMINI_RETIRED_MODELS = {"gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.0-flash-lite", "gemini-2.0-flash-lite-001"}
+_GROQ_DEVELOPER_REPLACEMENTS = {
+    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+}
+_GROQ_JSON_SCHEMA_MODELS = {"openai/gpt-oss-120b", "openai/gpt-oss-20b"}
 _TRANSIENT_HTTP = {408, 409, 429, 500, 502, 503, 504}
 
 
@@ -110,14 +117,27 @@ def provider_capabilities(profile: dict) -> LLMCapabilities:
         return LLMCapabilities(json_object=True, json_schema=False, responses_api=True)
     if provider == "gemini":
         return LLMCapabilities(json_object=True, json_schema=True)
+    if provider == "groq":
+        model = str(profile.get("model") or "").strip().lower()
+        return LLMCapabilities(
+            json_object=True,
+            json_schema=model in _GROQ_JSON_SCHEMA_MODELS,
+        )
     return LLMCapabilities(json_object=True, json_schema=False)
 
 
 def model_warning(profile: dict) -> str:
     model = str(profile.get("model") or "").strip()
-    if provider_name(profile) == "deepseek" and model in _DEEPSEEK_RETIRED_MODELS:
+    provider = provider_name(profile)
+    if provider == "deepseek" and model in _DEEPSEEK_RETIRED_MODELS:
         return (f"DeepSeek model '{model}' is retired. Use 'deepseek-v4-flash' for routine replies "
                 "or 'deepseek-v4-pro' for higher quality.")
+    if provider == "gemini" and model in _GEMINI_RETIRED_MODELS:
+        return f"Gemini model '{model}' is retired. Use 'gemini-3.8-flash'."
+    if provider == "groq" and model in _GROQ_DEVELOPER_REPLACEMENTS:
+        replacement = _GROQ_DEVELOPER_REPLACEMENTS[model]
+        return (f"Groq model '{model}' may require Enterprise access. "
+                f"Use '{replacement}' for Developer Plan compatibility.")
     return ""
 
 
@@ -216,6 +236,19 @@ def _complete_openai(profile: dict, messages: list[dict], *, max_tokens: int, te
             close()
 
 
+def _anthropic_uses_fixed_sampling(model: str) -> bool:
+    """Claude 4.7+ and Mythos reject non-default legacy sampling parameters."""
+    normalized = str(model or "").strip().lower()
+    if normalized.startswith("claude-mythos"):
+        return True
+    match = re.match(r"^claude-[a-z0-9]+-(\d+)(?:-(\d+))?", normalized)
+    if not match:
+        return False
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    return major >= 5 or (major == 4 and minor >= 7)
+
+
 def _merge_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     system_parts: list[str] = []
     converted: list[dict] = []
@@ -244,8 +277,9 @@ def _complete_anthropic(profile: dict, messages: list[dict], *, max_tokens: int,
     system, converted = _merge_anthropic_messages(messages)
     headers = {"x-api-key": str(profile.get("api_key") or ""), "anthropic-version": "2023-06-01",
                "content-type": "application/json"}
-    payload: dict[str, Any] = {"model": model, "messages": converted, "max_tokens": max_tokens,
-                              "temperature": temperature}
+    payload: dict[str, Any] = {"model": model, "messages": converted, "max_tokens": max_tokens}
+    if not _anthropic_uses_fixed_sampling(model):
+        payload["temperature"] = temperature
     if system:
         payload["system"] = system
     if response_format:

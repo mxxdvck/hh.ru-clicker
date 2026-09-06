@@ -814,17 +814,32 @@ function llmProfileModelWarning(row) {
   const model = (row.querySelector('.lp-model')?.value || '').trim().toLowerCase();
   const warning = row.querySelector('.lp-model-warning');
   if (!warning) return;
+  let target = '';
+  let message = '';
   if (url.includes('api.deepseek.com') && ['deepseek-chat', 'deepseek-reasoner'].includes(model)) {
-    warning.innerHTML = `⚠️ ${esc(model)} выведена из эксплуатации. <button type="button" class="btn-sm" style="padding:0 5px" onclick="llmProfileMigrateDeepSeek(this.closest('.llm-profile-row'))">→ deepseek-v4-flash</button>`;
+    target = 'deepseek-v4-flash';
+    message = `${esc(model)} выведена из эксплуатации.`;
+  }
+  if (url.includes('generativelanguage.googleapis.com') && ['gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001'].includes(model)) {
+    target = 'gemini-3.8-flash';
+    message = `${esc(model)} выведена из эксплуатации.`;
+  }
+  if (url.includes('api.groq.com') && model === 'llama-3.3-70b-versatile') {
+    target = 'openai/gpt-oss-120b';
+    message = `${esc(model)} может требовать Enterprise-доступ.`;
+  }
+  if (target) {
+    warning.innerHTML = `⚠️ ${message} <button type="button" class="btn-sm" style="padding:0 5px" data-target-model="${esc(target)}">→ ${esc(target)}</button>`;
+    warning.querySelector('button')?.addEventListener('click', () => llmProfileMigrateModel(row, target));
   } else {
     warning.textContent = '';
   }
 }
 
-function llmProfileMigrateDeepSeek(row) {
+function llmProfileMigrateModel(row, target) {
   const model = row?.querySelector('.lp-model');
-  if (!model) return;
-  model.value = 'deepseek-v4-flash';
+  if (!model || !target) return;
+  model.value = target;
   llmProfileModelWarning(row);
   _llmAutoSave();
 }
@@ -1099,8 +1114,8 @@ function _llmDetectProvider(key) {
   if (k.startsWith('sk-or-'))   return {name:'OpenRouter', base_url:'https://openrouter.ai/api/v1', model:'openai/gpt-4o-mini'};
   if (k.startsWith('sk-ant-'))  return {name:'Anthropic',  base_url:'https://api.anthropic.com/v1', model:'claude-haiku-4-5-20251001'};
   if (k.startsWith('sk-proj-')) return {name:'OpenAI',     base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
-  if (k.startsWith('gsk_'))     return {name:'Groq',       base_url:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile'};
-  if (k.startsWith('AIza'))     return {name:'Gemini',     base_url:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-2.0-flash'};
+  if (k.startsWith('gsk_'))     return {name:'Groq',       base_url:'https://api.groq.com/openai/v1', model:'openai/gpt-oss-120b'};
+  if (k.startsWith('AIza'))     return {name:'Gemini',     base_url:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-3.8-flash'};
   if (k.startsWith('hf_'))      return {name:'HuggingFace',base_url:'https://api-inference.huggingface.co/v1', model:'meta-llama/Llama-3.3-70B-Instruct'};
   if (k.startsWith('sk-') && k.length < 45) return {name:'DeepSeek', base_url:'https://api.deepseek.com', model:'deepseek-v4-flash'};
   if (k.startsWith('sk-'))      return {name:'OpenAI',     base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
@@ -1462,9 +1477,13 @@ function syncScheduleSettings(snap) {
     const autoSendOn = cfg.llm_auto_send === true;
     const llmLog = State.lastSnapshot?.llm_log || [];
     const draftsCount = llmLog.filter(r => !r.sent).length;
-    draftsBanner.style.display = (!autoSendOn && draftsCount > 0) ? '' : 'none';
-    if (!autoSendOn && draftsCount > 0) {
-      draftsBanner.innerHTML = `📝 <b>Есть ${draftsCount} черновиков на проверке</b> — включение Auto safe не отправит их вслепую: перед отправкой каждый ответ должен снова пройти проверку фактов и риска.`;
+    const reviewCount = llmLog.filter(r => !r.sent && String(r.source || '').includes('review')).length;
+    const visibleCount = autoSendOn ? reviewCount : draftsCount;
+    draftsBanner.style.display = visibleCount > 0 ? '' : 'none';
+    if (visibleCount > 0) {
+      draftsBanner.innerHTML = autoSendOn
+        ? `⚠️ <b>${reviewCount} черновиков требуют ручной проверки</b> - Auto safe не отправил их из-за policy gate.`
+        : `📝 <b>Есть ${draftsCount} черновиков на проверке</b> - включение Auto safe не отправит их вслепую: перед отправкой новый ответ должен снова пройти проверку фактов и риска.`;
     }
   }
   // Smart search filters
@@ -1677,7 +1696,10 @@ function updateLlmStatusBar(snap) {
   // Replied count from llm_log
   const sentCount = llmLog.filter(l => l.sent).length;
   const draftCount = llmLog.filter(l => !l.sent).length;
-  const draftHint = draftCount && !autoSend ? ' ← ждут «Автоотправку»' : '';
+  const reviewCount = llmLog.filter(l => !l.sent && String(l.source || '').includes('review')).length;
+  const draftHint = autoSend
+    ? (reviewCount ? ` ← ${reviewCount} требуют проверки` : '')
+    : (draftCount ? ' ← Auto safe выключен' : '');
   stReplied.textContent = `✅ ${sentCount} отправлено · 📝 ${draftCount} черновиков${draftHint}`;
   const stProvider = document.getElementById('llm-st-provider');
   const stLast = document.getElementById('llm-st-last');
@@ -1830,6 +1852,21 @@ async function llmInterviewsLoad() {
   _llmRenderHrLinks(_llmRowsCache);
 }
 
+async function llmCopyDraft(btn) {
+  const text = decodeURIComponent(btn?.dataset?.draft || '');
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const old = btn.textContent;
+    btn.textContent = '✅ Скопировано';
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  } catch(e) {
+    const area = document.createElement('textarea');
+    area.value = text; area.style.position = 'fixed'; area.style.opacity = '0';
+    document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+  }
+}
+
 function llmInterviewsRender() {
   let rows = _llmRowsCache.slice();
   const acc = document.getElementById('llm-log-acc-filter')?.value || '';
@@ -1913,6 +1950,10 @@ function llmInterviewsRender() {
   tbody.innerHTML = rows.map(r => {
     const empMsg = esc(r.employer_last_msg || '—').replace(/\n/g, '<br>');
     const botReply = esc(r.llm_reply || '').replace(/\n/g, '<br>');
+    const reviewMeta = r.status === 'draft' && (r.llm_category || r.llm_review_reason)
+      ? `<div style="font-size:10px;color:var(--yellow);margin-top:5px">🧪 ${esc(r.llm_category || 'review')}${r.llm_review_reason ? ' · ' + esc(r.llm_review_reason) : ''}</div>` : '';
+    const draftActions = r.status === 'draft' && r.llm_reply
+      ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn-sm" data-draft="${encodeURIComponent(r.llm_reply)}" onclick="llmCopyDraft(this)">📋 Копировать</button>${r.neg_id ? ` <a class="btn-sm" href="https://hh.ru/chat/${encodeURIComponent(r.neg_id)}" target="_blank" rel="noopener">Открыть чат HH ↗</a>` : ''}</div>` : '';
     const negLink = r.neg_id
       ? `<a href="https://hh.ru/chat/${encodeURIComponent(r.neg_id)}" target="_blank" style="font-size:10px;color:var(--cyan)">🔗</a>` : '';
     const dateStr = (r.last_seen || r.first_seen || '').replace('T', ' ').slice(0, 16);
@@ -1926,7 +1967,7 @@ function llmInterviewsRender() {
       <td style="font-size:11px">${esc(r.employer||'')} ${negLink}${ratingSlot}</td>
       <td style="font-size:11px;color:var(--dim)">${esc(r.vacancy_title||'')}</td>
       <td class="llm-msg-cell">${empMsg}</td>
-      <td class="llm-reply-cell">${botReply}</td>
+      <td class="llm-reply-cell">${botReply}${reviewMeta}${draftActions}</td>
       <td>${statusBadge(r.status)}</td>
       <td>${chatBadge(r.chat_status || '')}</td>
     </tr>`;

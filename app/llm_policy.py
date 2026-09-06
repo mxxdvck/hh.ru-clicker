@@ -20,26 +20,35 @@ _INJECTION_PATTERNS = (
     r"\u0441\u0435\u043a\u0440\u0435\u0442\u043d\w*\s+\u043f\u0440\u043e\u043c\u043f\u0442",
     r"\u0441\u0438\u0441\u0442\u0435\u043c\u043d\w*\s+\u043f\u0440\u043e\u043c\u043f\u0442",
     r"\u0438\u0433\u043d\u043e\u0440\u0438\u0440\w*\s+\u043f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\w*\s+\u0438\u043d\u0441\u0442\u0440\u0443\u043a\u0446",
+    r"\u0437\u0430\u0431\u0443\u0434\w*\s+(\u0432\u0441\u0435\s+)?(\u043f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\w*\s+)?\u0438\u043d\u0441\u0442\u0440\u0443\u043a\u0446",
+    r"\u0432\u044b\u0432\u0435\u0434\w*\s+(\u0441\u0438\u0441\u0442\u0435\u043c\u043d\w*|developer|system)\s+(prompt|\u043f\u0440\u043e\u043c\u043f\u0442|\u0438\u043d\u0441\u0442\u0440\u0443\u043a\u0446)",
     r"\u043f\u043e\u043a\u0430\u0436\u0438\w*\s+(api|\u043a\u043b\u044e\u0447|\u0442\u043e\u043a\u0435\u043d|prompt|\u043f\u0440\u043e\u043c\u043f\u0442)",
 )
 
 
 _SECRET_OUTPUT_PATTERNS = (
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
+    r"\bsk-ant-[A-Za-z0-9_-]{12,}\b",
+    r"\bgsk_[A-Za-z0-9_-]{12,}\b",
+    r"\bAIza[A-Za-z0-9_-]{20,}\b",
+    r"\bhf_[A-Za-z0-9_-]{12,}\b",
     r"\bHH_BOT_[A-Z0-9_]+\b",
     r"\bOPENAI_API_KEY\b",
     r"\bAPI[_-]?KEY\s*[:=]",
+    r"\b(?:access|auth|bearer)[_-]?token\s*[:=]",
 )
 
 _CATEGORY_MARKERS = {
     "salary": ("salary", "compensation", "pay range", "\u0437\u0430\u0440\u043f\u043b\u0430\u0442", "\u043e\u043a\u043b\u0430\u0434", "\u0434\u043e\u0445\u043e\u0434", "\u0432\u0438\u043b\u043a\u0430"),
     "relocation": ("relocat", "move to", "\u043f\u0435\u0440\u0435\u0435\u0437\u0434", "\u0440\u0435\u043b\u043e\u043a\u0430\u0446", "\u043a\u043e\u043c\u0430\u043d\u0434\u0438\u0440\u043e\u0432", "business trip"),
-    "schedule": ("timezone", "time zone", "schedule", "office", "remote", "hybrid", "\u043c\u043e\u0441\u043a\u043e\u0432\u0441\u043a", "\u043c\u0441\u043a", "\u0447\u0430\u0441\u043e\u0432", "\u0433\u0440\u0430\u0444\u0438\u043a", "\u043e\u0444\u0438\u0441", "\u0443\u0434\u0430\u043b\u0435\u043d", "\u0433\u0438\u0431\u0440\u0438\u0434"),
+    "interview": ("interview", "phone call", "video call", "google meet", "zoom", "teams call", "\u0441\u043e\u0431\u0435\u0441\u0435\u0434", "\u0441\u043e\u0437\u0432\u043e\u043d", "\u0437\u0432\u043e\u043d\u043e\u043a", "\u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e", "\u0432\u0441\u0442\u0440\u0435\u0447\u0430 \u0441 \u0440\u0435\u043a\u0440\u0443\u0442"),
+    "assignment": ("test task", "take-home", "coding challenge", "assessment", "home assignment", "\u0442\u0435\u0441\u0442\u043e\u0432", "\u0442\u0435\u0441\u0442\u043e\u0432\u043e\u0435 \u0437\u0430\u0434\u0430\u043d\u0438\u0435", "\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u0437\u0430\u0434\u0430\u043d\u0438\u0435 \u0434\u043b\u044f \u043e\u0442\u0431\u043e\u0440\u0430"),
+    "commitment": ("nda", "non-disclosure", "confidentiality agreement", "sign the agreement", "\u043f\u043e\u0434\u043f\u0438\u0441\u0430\u0442\u044c nda", "\u0441\u043e\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e \u043d\u0435\u0440\u0430\u0437\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0438", "\u0442\u0440\u0443\u0434\u043e\u0432\u043e\u0439 \u0434\u043e\u0433\u043e\u0432\u043e\u0440", "\u043e\u0444\u0435\u0440"),
+    "schedule": ("timezone", "time zone", "schedule", "office", "remote", "hybrid", "\u043c\u043e\u0441\u043a\u043e\u0432\u0441\u043a", "\u043c\u0441\u043a", "\u0447\u0430\u0441\u043e\u0432", "\u0433\u0440\u0430\u0444\u0438\u043a", "\u043e\u0444\u0438\u0441", "\u0443\u0434\u0430\u043b\u0435\u043d", "\u0433\u0438\u0431\u0440\u0438\u0434", "\u0441\u043c\u0435\u043d"),
     "availability": ("start date", "when can you start", "notice period", "\u0434\u0430\u0442\u0430 \u0432\u044b\u0445\u043e\u0434\u0430", "\u043a\u043e\u0433\u0434\u0430 \u0433\u043e\u0442\u043e\u0432\u044b \u0432\u044b\u0439\u0442\u0438", "\u043a\u043e\u0433\u0434\u0430 \u0441\u043c\u043e\u0436\u0435\u0442\u0435 \u043f\u0440\u0438\u0441\u0442\u0443\u043f\u0438\u0442\u044c", "\u043f\u0440\u0438\u0441\u0442\u0443\u043f\u0438\u0442\u044c"),
     "experience": ("experience", "years", "worked with", "\u043e\u043f\u044b\u0442", "\u0441\u0442\u0430\u0436", "\u0440\u0430\u0431\u043e\u0442\u0430\u043b", "\u0440\u0430\u0431\u043e\u0442\u0430\u043b\u0438", "erp", "1c", "1\u0441", "\u0442\u0435\u0445\u043d\u043e\u043b\u043e\u0433", "\u043d\u0430\u0432\u044b\u043a"),
-    "personal": ("age", "how old", "years old", "married", "children", "citizenship", "nationality", "\u0438\u0441\u043f\u043e\u043b\u043d\u0438\u043b", "\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0432\u0430\u043c \u043b\u0435\u0442", "\u0432\u0430\u043c \u043b\u0435\u0442", "\u0432\u043e\u0437\u0440\u0430\u0441\u0442", "\u0441\u0435\u043c\u0435\u0439\u043d", "\u0434\u0435\u0442\u0438", "\u0433\u0440\u0430\u0436\u0434\u0430\u043d\u0441\u0442\u0432\u043e", "\u043d\u0430\u0446\u0438\u043e\u043d\u0430\u043b"),
+    "personal": ("age", "how old", "years old", "married", "children", "citizenship", "nationality", "phone number", "email address", "telegram", "whatsapp", "passport", "work permit", "visa", "background check", "security check", "\u0438\u0441\u043f\u043e\u043b\u043d\u0438\u043b", "\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0432\u0430\u043c \u043b\u0435\u0442", "\u0432\u0430\u043c \u043b\u0435\u0442", "\u0432\u043e\u0437\u0440\u0430\u0441\u0442", "\u0441\u0435\u043c\u0435\u0439\u043d", "\u0434\u0435\u0442\u0438", "\u0433\u0440\u0430\u0436\u0434\u0430\u043d\u0441\u0442\u0432\u043e", "\u043d\u0430\u0446\u0438\u043e\u043d\u0430\u043b", "\u0442\u0435\u043b\u0435\u0444\u043e\u043d", "\u043f\u043e\u0447\u0442", "\u0442\u0435\u043b\u0435\u0433\u0440\u0430\u043c", "\u0432\u0430\u0442\u0441\u0430\u043f", "\u043f\u0430\u0441\u043f\u043e\u0440\u0442", "\u0441\u043d\u0438\u043b\u0441", "\u0438\u043d\u043d", "\u0434\u0430\u0442\u0430 \u0440\u043e\u0436\u0434\u0435\u043d\u0438\u044f", "\u0430\u0434\u0440\u0435\u0441", "\u0432\u0438\u0437\u0430", "\u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u0435 \u043d\u0430 \u0440\u0430\u0431\u043e\u0442\u0443", "\u043f\u043e\u043b\u0438\u0433\u0440\u0430\u0444"),
 }
-
 
 _PROFILE_FIELDS = (
     "salary_expectation",
@@ -52,7 +61,8 @@ _PROFILE_FIELDS = (
     "schedule",
 )
 
-_HIGH_RISK_CATEGORIES = {"salary", "relocation", "schedule", "availability", "personal"}
+_ALWAYS_REVIEW_CATEGORIES = {"personal", "interview", "assignment", "commitment"}
+_HIGH_RISK_CATEGORIES = {"salary", "relocation", "schedule", "availability"}
 
 _CATEGORY_EVIDENCE_PREFIXES = {
     "salary": ("salary_expectation:",),
@@ -350,9 +360,9 @@ def evaluate_reply_decision(data: dict, *, employer_text: str, trusted_context: 
         return decision
 
     supported = [item for item in evidence if evidence_supported(item, trusted_context)]
-    if category == "personal":
+    if category in _ALWAYS_REVIEW_CATEGORIES:
         decision.action = "review"
-        decision.reason = decision.reason or "personal question requires explicit human review"
+        decision.reason = decision.reason or f"{category} question requires explicit human review"
         return decision
     if category in _HIGH_RISK_CATEGORIES | {"experience"}:
         if not evidence or len(supported) != len(evidence):
@@ -492,8 +502,8 @@ def evaluate_questionnaire_field(data: dict, *, question: dict, trusted_context:
         return decision
 
     supported = [item for item in evidence if evidence_supported(item, trusted_context)]
-    if category == "personal":
-        decision.reason = reason or "personal questionnaire field requires explicit human review"
+    if category in _ALWAYS_REVIEW_CATEGORIES:
+        decision.reason = reason or f"{category} questionnaire field requires explicit human review"
         return decision
     if category in _HIGH_RISK_CATEGORIES | {"experience"}:
         if not evidence or len(supported) != len(evidence):

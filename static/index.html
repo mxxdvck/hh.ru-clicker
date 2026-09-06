@@ -1002,7 +1002,7 @@
       </div>
       <div style="display:flex;gap:14px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
-          <input type="checkbox" id="llm-auto-send" style="accent-color:var(--green)" checked onchange="_llmMarkEditing();sendCmd({type:'set_config',key:'llm_auto_send',value:this.checked})">
+          <input type="checkbox" id="llm-auto-send" style="accent-color:var(--green)" onchange="_llmMarkEditing();sendCmd({type:'set_config',key:'llm_auto_send',value:this.checked})">
           Auto safe: автоматически отправлять только проверенные ответы
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">

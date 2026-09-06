@@ -593,3 +593,72 @@ def test_phase4_quick_setup_uses_current_deepseek_model(ui):
     assert config_call["json"]["model"] == "deepseek-v4-flash"
     assert config_call["json"]["auto_send"] is False
     expect(page.locator("#llm-quick-status")).to_contain_text("deepseek-v4-flash")
+
+def test_phase4_retired_gemini_model_warns_and_migrates(ui):
+    page = _boot(ui, config={
+        "llm_profiles": [{
+            "name": "Gemini",
+            "api_key": "AIza" + "x" * 24,
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "model": "gemini-2.0-flash",
+            "enabled": True,
+        }],
+        "llm_profile_mode": "fallback",
+    })
+    row = page.locator(".llm-profile-row")
+    warning = row.locator(".lp-model-warning")
+    expect(warning.locator("button")).to_contain_text("gemini-3.8-flash")
+
+    warning.locator("button").click()
+    expect(row.locator(".lp-model")).to_have_value("gemini-3.8-flash")
+    expect(warning).to_have_text("")
+
+    calls = _wait_http_call(ui, "POST", "/api/llm_profiles")
+    assert calls[-1]["json"]["profiles"][0]["model"] == "gemini-3.8-flash"
+
+
+def test_phase4_quick_setup_uses_current_gemini_model(ui):
+    page = _boot(ui, config={"llm_profiles": [], "llm_profile_mode": "fallback"})
+    quick = page.locator("#llm-quick-key")
+    quick.fill("AIza" + "x" * 24)
+    quick.press("Enter")
+
+    profile_call = _wait_http_call(ui, "POST", "/api/llm_profiles")[-1]
+    profile = profile_call["json"]["profiles"][0]
+    assert profile["name"] == "Gemini"
+    assert profile["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert profile["model"] == "gemini-3.8-flash"
+
+
+def test_phase4_groq_enterprise_model_warns_and_migrates(ui):
+    page = _boot(ui, config={
+        "llm_profiles": [{
+            "name": "Groq",
+            "api_key": "gsk_" + "x" * 24,
+            "base_url": "https://api.groq.com/openai/v1",
+            "model": "llama-3.3-70b-versatile",
+            "enabled": True,
+        }],
+        "llm_profile_mode": "fallback",
+    })
+    row = page.locator(".llm-profile-row")
+    warning = row.locator(".lp-model-warning")
+    expect(warning).to_contain_text("Enterprise")
+    expect(warning.locator("button")).to_contain_text("openai/gpt-oss-120b")
+    warning.locator("button").click()
+    expect(row.locator(".lp-model")).to_have_value("openai/gpt-oss-120b")
+    calls = _wait_http_call(ui, "POST", "/api/llm_profiles")
+    assert calls[-1]["json"]["profiles"][0]["model"] == "openai/gpt-oss-120b"
+
+
+def test_phase4_quick_setup_uses_groq_developer_model(ui):
+    page = _boot(ui, config={"llm_profiles": [], "llm_profile_mode": "fallback"})
+    quick = page.locator("#llm-quick-key")
+    quick.fill("gsk_" + "x" * 24)
+    quick.press("Enter")
+
+    profile_call = _wait_http_call(ui, "POST", "/api/llm_profiles")[-1]
+    profile = profile_call["json"]["profiles"][0]
+    assert profile["name"] == "Groq"
+    assert profile["base_url"] == "https://api.groq.com/openai/v1"
+    assert profile["model"] == "openai/gpt-oss-120b"
