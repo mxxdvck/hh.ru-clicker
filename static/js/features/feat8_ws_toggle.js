@@ -199,6 +199,17 @@
     addCriticalTestIds();
   }
 
+  function emitPhase5Snapshot(snapshot) {
+    safe(function () {
+      var snap = snapshot;
+      if (!snap && typeof State !== 'undefined' && State) snap = State.lastSnapshot;
+      if (!snap) return;
+      if (window.HHUI && HHUI.core && typeof HHUI.core.emit === 'function') {
+        HHUI.core.emit('hh:snapshot', { snapshot: snap });
+      }
+    }, null);
+  }
+
   function ensureStylesheet(id, href) {
     if (document.getElementById(id)) return;
     var link = document.createElement('link');
@@ -264,6 +275,7 @@
       var res = orig.apply(this, arguments);
       safe(syncGlobalCheckbox, null);
       safe(syncTabAria, null);
+      emitPhase5Snapshot();
       return res;
     };
   });
@@ -280,6 +292,7 @@
     syncSnapshot: function (snapshot) {
       safe(function () { syncGlobalCheckbox(snapshot); }, null);
       safe(syncTabAria, null);
+      emitPhase5Snapshot(snapshot);
     }
   };
 
