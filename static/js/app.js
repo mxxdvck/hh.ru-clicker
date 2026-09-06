@@ -3698,7 +3698,7 @@ function buildCardHTML(acc) {
       <button class="btn-sm" style="font-size:9px;padding:1px 5px;color:var(--green);border-color:var(--green)"
         onclick="llmRunNow(this)" title="Проверить чаты и ответить прямо сейчас">🔄 Сейчас</button>
       ${acc.temp && !acc.bot_active ? `<button class="btn-sm" style="color:var(--green);border-color:var(--green)" onclick="sessionActivate(${acc.idx}, this)">${t('btn_launch')}</button>` : ''}
-      ${acc.temp && acc.bot_active ? `<button class="btn-sm" style="color:var(--orange);border-color:var(--orange)" onclick="sessionDeactivate(${acc.idx},this)" title="Остановить бот для этого аккаунта (сессия сохранится — можно запустить снова)">🛑 Стоп</button>` : ''}
+      ${acc.temp && acc.bot_active ? `<button class="btn-sm" style="color:var(--orange);border-color:var(--orange)" onclick="sessionDeactivate(${acc.idx},this)" title="Полностью отключить worker аккаунта. Для временной остановки используйте ПАУЗА АККАУНТА">⏹ Отключить</button>` : ''}
       ${acc.temp ? `<button class="btn-sm" style="color:var(--red);border-color:var(--red)" onclick="sessionRemove(${acc.idx})">${t('btn_delete')}</button>` : ''}
     </div>
     <details class="acc-letter-wrap" id="acc-letter-wrap-${acc.idx}">
@@ -3964,6 +3964,7 @@ function updateCard(card, acc) {
         ['\u041d\u0435 \u0446\u0435\u043b\u0435\u0432\u0430\u044f \u0440\u043e\u043b\u044c', Number(fs.title_no_include || 0)],
         ['\u0423\u0440\u043e\u0432\u0435\u043d\u044c/\u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435', Number(fs.title_excluded || 0)],
         ['\u0414\u0443\u0431\u043b\u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438/\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u0438', Number(fs.same_posting_duplicates || 0)],
+        ['\u0414\u0443\u0431\u043b\u0438 \u043f\u0440\u043e\u0448\u043b\u044b\u0445 \u043e\u0442\u043a\u043b\u0438\u043a\u043e\u0432', Number(fs.historical_posting_duplicates || 0)],
         ['Уже откликались', Number(fs.already_applied || 0)],
         ['Отказ HH', Number(fs.discarded || 0)],
         ['Тесты', Number(fs.tests || 0)],
@@ -5333,8 +5334,8 @@ async function sessionActivate(idx, btn) {
 }
 
 async function sessionDeactivate(idx, btn) {
-  if (!confirm('Остановить бот для этой сессии? Cookies и письмо сохранятся, можно запустить снова.')) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Стоп…'; }
+  if (!confirm('Полностью отключить аккаунт? Для временной остановки используйте «ПАУЗА АККАУНТА». Дневной счётчик откликов сохранится.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Отключение…'; }
   try {
     const res = await fetch('/api/session/' + idx + '/deactivate', {method: 'POST'});
     const text = await res.text();
@@ -5342,7 +5343,7 @@ async function sessionDeactivate(idx, btn) {
     try { data = text ? JSON.parse(text) : {}; } catch (_) {}
     if (!res.ok || data.status !== 'ok') {
       alert('Ошибка: ' + (data.message || data.error || data.detail || text || `HTTP ${res.status}`));
-      if (btn) { btn.disabled = false; btn.textContent = '🛑 Стоп'; }
+      if (btn) { btn.disabled = false; btn.textContent = '⏹ Отключить'; }
       return;
     }
     setSessionActiveInCurrentSnapshot(idx, false);

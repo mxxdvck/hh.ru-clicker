@@ -186,8 +186,8 @@ from app.config import (
 )
 
 from app.storage import (
-    _load_cache, _cache_applied, _cache_lock,
-    add_applied, is_applied, add_test_vacancy, is_test, get_stats,
+    add_applied, is_applied, get_account_applied, get_applied_list,
+    add_test_vacancy, is_test, get_stats,
     load_browser_sessions, save_browser_sessions,
     upsert_interview, get_no_chat_neg_ids, get_replied_keys,
     _schedule_save,
@@ -223,6 +223,7 @@ from app.hh_client_factory import get_client
 from app.apply_safety import reserve_apply, finalize_apply
 from app.application_ledger import (
     mark_interrupted_startup, mark_run_interrupted, mark_application, list_interrupted,
+    count_applied_today,
 )
 
 from app.hh_chat import (
@@ -328,6 +329,39 @@ def _title_matches_target(title: str, includes: list[str], excludes: list[str]) 
     return True, ""
 
 
+def _posting_identity_keys(meta: dict) -> set[tuple[str, str, str]]:
+    """Build stable employer+title identities, preferring ID but keeping name fallback."""
+    meta = meta or {}
+    title_key = _normalize_title_text(meta.get("title", ""))
+    if not title_key:
+        return set()
+    keys = set()
+    employer_id = str(meta.get("employer_id") or "").strip()
+    company_key = _normalize_title_text(meta.get("company", ""))
+    if employer_id:
+        keys.add(("id", employer_id, title_key))
+    if company_key:
+        keys.add(("name", company_key, title_key))
+    return keys
+
+
+def _recent_applied_posting_keys(account_name: str, days: int = 30) -> set[tuple[str, str, str]]:
+    """Posting identities successfully applied to recently, persisted across cycles/restarts."""
+    cutoff = (datetime.now(_MSK) if _MSK else datetime.now()) - timedelta(days=max(int(days), 1))
+    keys = set()
+    for info in get_account_applied(account_name).values():
+        if not isinstance(info, dict):
+            continue
+        at = str(info.get("at") or "")
+        try:
+            if at and datetime.fromisoformat(at).date() < cutoff.date():
+                continue
+        except ValueError:
+            continue
+        keys.update(_posting_identity_keys(info))
+    return keys
+
+
 def _dedupe_same_postings(vacancy_ids: list[str], vacancy_meta: dict) -> tuple[list[str], int]:
     """Keep one vacancy per employer + normalized title across different HH IDs."""
     kept = []
@@ -335,16 +369,28 @@ def _dedupe_same_postings(vacancy_ids: list[str], vacancy_meta: dict) -> tuple[l
     duplicates = 0
     for vid in vacancy_ids:
         meta = vacancy_meta.get(vid, {}) or {}
-        title_key = _normalize_title_text(meta.get("title", ""))
-        employer_key = str(meta.get("employer_id") or "").strip()
-        if not employer_key:
-            employer_key = _normalize_title_text(meta.get("company", ""))
-        key = (employer_key, title_key) if employer_key and title_key else None
-        if key and key in seen:
+        keys = _posting_identity_keys(meta)
+        if keys and seen.intersection(keys):
             duplicates += 1
             continue
-        if key:
-            seen.add(key)
+        seen.update(keys)
+        kept.append(vid)
+    return kept, duplicates
+
+
+def _drop_recently_applied_postings(vacancy_ids: list[str], vacancy_meta: dict,
+                                    account_name: str, days: int = 30) -> tuple[list[str], int]:
+    """Block cloned vacancies already applied to under another HH vacancy ID."""
+    historical = _recent_applied_posting_keys(account_name, days=days)
+    if not historical:
+        return list(vacancy_ids), 0
+    kept = []
+    duplicates = 0
+    for vid in vacancy_ids:
+        keys = _posting_identity_keys(vacancy_meta.get(vid, {}) or {})
+        if keys and historical.intersection(keys):
+            duplicates += 1
+            continue
         kept.append(vid)
     return kept, duplicates
 
@@ -685,7 +731,6 @@ class BotManager:
         # in-flight работа после SIGTERM продолжается, save_executor уже закрыт,
         # add_applied молча теряет запись (аудит 2026-08-17 #6 critical).
         self._workers: list = []
-        _load_cache()
         load_config()
         interrupted = mark_interrupted_startup()
         if interrupted:
@@ -702,26 +747,18 @@ class BotManager:
         except Exception as _e:
             log_debug(f"applying stored proxy failed: {_e}")
         self._start_time = datetime.now()
-        # Load recent responses from applied_vacancies into deque
+        # Load recent responses through the storage accessor so cache rebinding
+        # cannot leave manager.py holding a stale ``None`` reference.
         try:
-            with _cache_lock:
-                if _cache_applied:
-                    all_items = []
-                    for acc_name, vacancies in _cache_applied.items():
-                        if isinstance(vacancies, dict):
-                            for vid, info in vacancies.items():
-                                if isinstance(info, dict):
-                                    all_items.append({
-                                        "id": vid, "title": info.get("title", ""),
-                                        "company": info.get("company", ""),
-                                        "time": (info.get("at", "") or "")[:16].replace("T", " "),
-                                        "icon": "✅", "acc": acc_name,
-                                    })
-                    # Sort by time, take last 100
-                    all_items.sort(key=lambda x: x.get("time", ""), reverse=True)
-                    for item in all_items[:100]:
-                        self.recent_responses.append(item)
-                    log_debug(f"Loaded {len(self.recent_responses)} recent responses from cache")
+            for item in get_applied_list(limit=100):
+                self.recent_responses.append({
+                    "id": item.get("vacancy_id", ""),
+                    "title": item.get("title", ""),
+                    "company": item.get("company", ""),
+                    "time": (item.get("at", "") or "")[:16].replace("T", " "),
+                    "icon": "✅", "acc": item.get("account", ""),
+                })
+            log_debug(f"Loaded {len(self.recent_responses)} recent responses from cache")
         except Exception as e:
             log_debug(f"Failed to load recent responses: {e}")
         self.account_states = [AccountState(acc) for acc in accounts_data]
@@ -1113,8 +1150,7 @@ class BotManager:
                 _current_vacancy_idx = s.current_vacancy_idx
                 _total_vacancies = s.total_vacancies
 
-            with _cache_lock:
-                _total_applied = len((_cache_applied or {}).get(s.name, {}))
+            _total_applied = len(get_account_applied(s.name))
 
             accounts.append({
                 "idx": i,
@@ -1235,8 +1271,7 @@ class BotManager:
                     _current_vacancy_idx = s.current_vacancy_idx
                     _total_vacancies = s.total_vacancies
 
-                with _cache_lock:
-                    _total_applied = len((_cache_applied or {}).get(s.acc["name"], {}))
+                _total_applied = len(get_account_applied(s.acc["name"]))
 
                 accounts.append({
                     "idx": idx,
@@ -1328,10 +1363,26 @@ class BotManager:
                     "paused_reason": s.paused_reason,
                 })
             else:
-                # Неактивная сессия — заглушка
+                # Inactive session: runtime state is gone, but durable application
+                # counters must remain visible and must not look reset to zero.
+                session_name = ts.get("name", f"Браузер #{i+1}")
+                persisted_applied = get_account_applied(session_name)
+                cached_daily = sum(
+                    1 for info in persisted_applied.values()
+                    if isinstance(info, dict) and str(info.get("at", "")).startswith(_today_msk())
+                )
+                try:
+                    ledger_daily = count_applied_today(session_name, _today_msk())
+                except Exception:
+                    ledger_daily = 0
+                persisted_daily = max(int(cached_daily), int(ledger_daily))
+                last_persisted_apply = max(
+                    (str(info.get("at") or "") for info in persisted_applied.values()
+                     if isinstance(info, dict)), default=""
+                )
                 accounts.append({
                     "idx": idx,
-                    "name": ts.get("name", f"Браузер #{i+1}"),
+                    "name": session_name,
                     "short": ts.get("short", f"Браузер#{i+1}"),
                     "color": "yellow",
                     "temp": True,
@@ -1339,7 +1390,8 @@ class BotManager:
                     "resume_hash": ts.get("resume_hash", ""),
                     "all_resumes": ts.get("all_resumes", []),
                     "letter": ts.get("letter", ""),
-                    "status": "—", "status_detail": "", "sent": 0, "tests": 0,
+                    "status": "—", "status_detail": "", "sent": 0,
+                    "total_applied": len(persisted_applied), "tests": 0,
                     "errors": 0, "already_applied": 0, "found_vacancies": 0,
                     "search_preview": [],
                     "current_vacancy_title": "", "current_vacancy_company": "",
@@ -1376,9 +1428,12 @@ class BotManager:
                     "responses_streak_required": 0,
                     "llm_enabled": True,
                     "use_oauth": bool(ts.get("use_oauth", False)),
-                    "daily_sent": 0,
+                    "daily_sent": persisted_daily,
                     "daily_limit": CONFIG.daily_apply_limit,
                     "hard_stopped": False,
+                    "last_apply_at": last_persisted_apply,
+                    "last_apply_attempt_at": last_persisted_apply,
+                    "paused_reason": "inactive",
                 })
 
         storage_stats = get_stats()
@@ -2198,6 +2253,9 @@ class BotManager:
             filtered, same_posting_duplicates = _dedupe_same_postings(
                 filtered, state.vacancy_meta
             )
+            filtered, historical_posting_duplicates = _drop_recently_applied_postings(
+                filtered, state.vacancy_meta, state.name
+            )
 
             state.filter_stats.update({
                 "missing_title": missing_title_skipped,
@@ -2217,6 +2275,7 @@ class BotManager:
                 "schedule": schedule_skipped,
                 "salary": salary_skipped,
                 "same_posting_duplicates": same_posting_duplicates,
+                "historical_posting_duplicates": historical_posting_duplicates,
                 "accepted": len(filtered),
                 "filtered_out": max(0, total_collected - len(filtered)),
             })

@@ -585,6 +585,7 @@ def add_applied(account_name: str, vacancy_id: str, info: dict = None):
             "url": f"{_hh_base()}/vacancy/{vacancy_id}",
             "title": title,
             "company": company,
+            "employer_id": new_info.get("employer_id") or existing.get("employer_id", ""),
             "salary_from": new_info.get("salary_from") or existing.get("salary_from"),
             "salary_to": new_info.get("salary_to") or existing.get("salary_to"),
             "at": new_info.get("at") or existing.get("at") or _now_msk_iso()
@@ -626,6 +627,17 @@ def is_applied(account_name: str, vacancy_id: str) -> bool:
     _load_cache()
     with _cache_lock:
         return vacancy_id in _cache_applied.get(account_name, {})
+
+
+def get_account_applied(account_name: str) -> dict:
+    """Return a detached copy of persisted successful applications for one account."""
+    _load_cache()
+    with _cache_lock:
+        rows = (_cache_applied or {}).get(str(account_name or ""), {})
+        if not isinstance(rows, dict):
+            return {}
+        return {str(vid): dict(info) if isinstance(info, dict) else {}
+                for vid, info in rows.items()}
 
 
 def is_test(vacancy_id: str) -> bool:

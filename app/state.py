@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from collections import deque
 
 from app.config import CONFIG
-from app.storage import _cache_applied, _cache_lock
+from app.storage import get_account_applied
+from app.application_ledger import count_applied_today
 
 
 class AccountState:
@@ -69,15 +70,16 @@ class AccountState:
             self.daily_date = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
         except Exception:
             self.daily_date = datetime.now().strftime("%Y-%m-%d")
-        # Count today's applies from persisted cache
+        # Rebuild today's counter from durable state. STOP/deactivate destroys only
+        # runtime AccountState, never the real daily usage.
         self.daily_sent = 0
         try:
-            with _cache_lock:
-                acc_applied = (_cache_applied or {}).get(self.name, {})
-                today = self.daily_date
-                for vid, info in acc_applied.items():
-                    if isinstance(info, dict) and str(info.get("at", "")).startswith(today):
-                        self.daily_sent += 1
+            ledger_count = count_applied_today(self.name, self.daily_date)
+            legacy_count = sum(
+                1 for info in get_account_applied(self.name).values()
+                if isinstance(info, dict) and str(info.get("at", "")).startswith(self.daily_date)
+            )
+            self.daily_sent = max(int(ledger_count), int(legacy_count))
         except Exception:
             pass
         self.hard_stopped = False  # жёсткая остановка (лимит или daily)

@@ -1,4 +1,4 @@
-from app import manager
+from app import manager, state as state_mod
 from app.config import CONFIG, _CONFIG_KEYS
 
 
@@ -46,3 +46,24 @@ def test_dashboard_snapshot_includes_search_filter_breakdown(monkeypatch):
     account = bot.get_state_snapshot()["accounts"][0]
 
     assert account["filter_stats"] == state.filter_stats
+
+
+def test_inactive_temp_session_keeps_persisted_daily_count(monkeypatch):
+    bot = _empty_bot(monkeypatch)
+    bot.temp_sessions = [{"name": "Test", "short": "T", "resume_hash": "r", "bot_active": False}]
+    monkeypatch.setattr(manager, "get_account_applied", lambda name: {
+        str(i): {"at": "2099-01-01T12:00:00+03:00"} for i in range(12)
+    })
+    monkeypatch.setattr(manager, "_today_msk", lambda: "2099-01-01")
+    monkeypatch.setattr(manager, "count_applied_today", lambda name, day: 12)
+    account = bot.get_state_snapshot()["accounts"][0]
+    assert account["bot_active"] is False
+    assert account["daily_sent"] == 12
+    assert account["total_applied"] == 12
+
+
+def test_account_state_rebuilds_daily_count_from_ledger(monkeypatch):
+    monkeypatch.setattr(state_mod, "count_applied_today", lambda name, day: 12)
+    monkeypatch.setattr(state_mod, "get_account_applied", lambda name: {})
+    state = state_mod.AccountState({"name": "Test", "short": "T", "color": "yellow", "urls": []})
+    assert state.daily_sent == 12

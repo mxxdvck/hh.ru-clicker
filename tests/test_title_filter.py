@@ -1,6 +1,9 @@
 import pytest
 
-from app.manager import _dedupe_same_postings, _normalize_title_text, _title_matches_target
+from app.manager import (
+    _dedupe_same_postings, _drop_recently_applied_postings,
+    _normalize_title_text, _title_matches_target,
+)
 
 
 INCLUDES = [
@@ -65,4 +68,28 @@ def test_same_employer_title_candidates_are_deduped():
     }
     kept, duplicates = _dedupe_same_postings(ids, meta)
     assert kept == ["1", "3", "4"]
+    assert duplicates == 1
+
+
+def test_recent_applied_clone_is_blocked_across_search_cycles(monkeypatch):
+    monkeypatch.setattr(
+        "app.manager.get_account_applied",
+        lambda account_name: {
+            "old-id": {
+                "title": "Программист 1С (департамент программного обеспечения)",
+                "company": "Красное & Белое, розничная сеть",
+                "at": "2099-01-01T12:00:00+03:00",
+            }
+        },
+    )
+    ids = ["new-clone", "other"]
+    meta = {
+        "new-clone": {
+            "title": "Программист 1С (департамент программного обеспечения)",
+            "company": "Красное & Белое, розничная сеть",
+        },
+        "other": {"title": "Программист 1С", "company": "Другая компания"},
+    }
+    kept, duplicates = _drop_recently_applied_postings(ids, meta, "acc")
+    assert kept == ["other"]
     assert duplicates == 1
