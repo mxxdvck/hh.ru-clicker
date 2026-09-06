@@ -252,6 +252,7 @@ def default_data() -> dict:
         "tests": [],
         "vacancies": [],
         "interviews": [],
+        "interviews_summary": {"total": 0, "drafts": 0, "reviews": 0, "pending": 0, "replied": 0},
         "hr_contacts": {"total": 0, "contacts": []},
         "sessions": [],
         "resume_views": {},  # dict idx -> payload; отсутствующий idx -> {"stats": {}, "history": []}
@@ -485,6 +486,7 @@ _DATA_GET_ROUTES = {
     "/api/tests": "tests",
     "/api/vacancies": "vacancies",
     "/api/interviews": "interviews",
+    "/api/interviews/summary": "interviews_summary",
     "/api/hr_contacts": "hr_contacts",
     "/api/sessions": "sessions",
     "/api/proxy/info": "proxy_info",

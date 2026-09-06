@@ -89,3 +89,28 @@ def test_select_extracted():
 def test_empty_html_returns_empty_list():
     assert _parse_questionnaire_rich("") == []
     assert _parse_questionnaire_rich("<div>nothing here</div>") == []
+
+
+def test_interleaved_control_types_preserve_question_mapping():
+    html = '''
+    <div data-qa="task-question">Relocation?</div>
+    <input type="radio" name="task_1" value="yes" id="rel_yes">
+    <label for="rel_yes">Yes</label>
+    <input type="radio" name="task_1" value="no" id="rel_no">
+    <label for="rel_no">No</label>
+    <div data-qa="task-question">Expected salary?</div>
+    <textarea name="task_2_text"></textarea>
+    <div data-qa="task-question">Work format?</div>
+    <select name="task_3"><option value="remote">Remote</option><option value="office">Office</option></select>
+    <div data-qa="task-question">Frameworks?</div>
+    <input type="checkbox" name="task_4" value="django" id="fw_django">
+    <label for="fw_django">Django</label>
+    '''
+    result = _parse_questionnaire_rich(html)
+    assert [(q["field"], q["type"], q["text"]) for q in result] == [
+        ("task_1", "radio", "Relocation?"),
+        ("task_2_text", "textarea", "Expected salary?"),
+        ("task_3", "select", "Work format?"),
+        ("task_4", "checkbox", "Frameworks?"),
+    ]
+    assert result[3]["options"] == [{"value": "django", "label": "Django"}]

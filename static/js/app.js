@@ -784,13 +784,14 @@ function llmProfileAdd(profile) {
       </div>
       <div>
         <div style="font-size:10px;color:var(--dim);margin-bottom:2px">Модель</div>
-        <input class="apply-input lp-model" style="font-size:11px" placeholder="gpt-4o-mini" value="${esc(p.model||'')}" oninput="llmProfileAutoSave()">
+        <input class="apply-input lp-model" style="font-size:11px" placeholder="gpt-4o-mini" value="${esc(p.model||'')}" oninput="llmProfileModelWarning(this.closest('.llm-profile-row'));llmProfileAutoSave()">
+        <div class="lp-model-warning" style="font-size:10px;color:var(--yellow);margin-top:3px"></div>
       </div>
     </div>
     <div style="display:flex;gap:6px;align-items:center">
       <div style="flex:1">
         <div style="font-size:10px;color:var(--dim);margin-bottom:2px">Base URL</div>
-        <input class="apply-input lp-url" style="font-size:11px" placeholder="https://api.openai.com/v1" value="${esc(p.base_url||'')}" oninput="llmProfileAutoSave()">
+        <input class="apply-input lp-url" style="font-size:11px" placeholder="https://api.openai.com/v1" value="${esc(p.base_url||'')}" oninput="llmProfileModelWarning(this.closest('.llm-profile-row'));llmProfileAutoSave()">
       </div>
       <div style="display:flex;flex-direction:column;gap:3px;padding-top:14px">
         <button class="btn-sm" onclick="llmProfileDetect(this.closest('.llm-profile-row'))" title="Определить провайдера и загрузить модели">🔍 Определить</button>
@@ -804,6 +805,43 @@ function llmProfileAdd(profile) {
   // даже когда backend знает про сохранённый ключ этого профиля.
   const keyInp = row.querySelector('.lp-key');
   if (keyInp) _llmUpdateKeyFingerprint(keyInp);
+  llmProfileModelWarning(row);
+}
+
+function llmProfileModelWarning(row) {
+  if (!row) return;
+  const url = (row.querySelector('.lp-url')?.value || '').toLowerCase();
+  const model = (row.querySelector('.lp-model')?.value || '').trim().toLowerCase();
+  const warning = row.querySelector('.lp-model-warning');
+  if (!warning) return;
+  let target = '';
+  let message = '';
+  if (url.includes('api.deepseek.com') && ['deepseek-chat', 'deepseek-reasoner'].includes(model)) {
+    target = 'deepseek-v4-flash';
+    message = `${esc(model)} выведена из эксплуатации.`;
+  }
+  if (url.includes('generativelanguage.googleapis.com') && ['gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001'].includes(model)) {
+    target = 'gemini-3.8-flash';
+    message = `${esc(model)} выведена из эксплуатации.`;
+  }
+  if (url.includes('api.groq.com') && model === 'llama-3.3-70b-versatile') {
+    target = 'openai/gpt-oss-120b';
+    message = `${esc(model)} может требовать Enterprise-доступ.`;
+  }
+  if (target) {
+    warning.innerHTML = `⚠️ ${message} <button type="button" class="btn-sm" style="padding:0 5px" data-target-model="${esc(target)}">→ ${esc(target)}</button>`;
+    warning.querySelector('button')?.addEventListener('click', () => llmProfileMigrateModel(row, target));
+  } else {
+    warning.textContent = '';
+  }
+}
+
+function llmProfileMigrateModel(row, target) {
+  const model = row?.querySelector('.lp-model');
+  if (!model || !target) return;
+  model.value = target;
+  llmProfileModelWarning(row);
+  _llmAutoSave();
 }
 
 // Alias: llmProfileAutoSave = _llmAutoSave (используется в oninput каждого поля
@@ -879,7 +917,7 @@ async function llmProfileDetect(row) {
     const res = await fetch('/api/llm_detect', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({api_key: key, base_url: urlEl?.value.trim() || ''})
+      body: JSON.stringify({api_key: key, base_url: urlEl?.value.trim() || '', model: modelEl?.value.trim() || ''})
     });
     const data = await res.json();
     if (!data.ok) {
@@ -889,8 +927,12 @@ async function llmProfileDetect(row) {
     if (data.base_url && urlEl && !urlEl.value.trim()) urlEl.value = data.base_url;
     if (data.models?.length) {
       if (modelEl && !modelEl.value.trim()) modelEl.value = data.models[0];
-      if (st) { st.textContent = `✅ ${data.models.length} моделей`; st.style.color = 'var(--green)'; }
+      if (st) {
+        st.textContent = data.model_warning ? `⚠️ ${data.model_warning}` : `✅ ${data.models.length} моделей`;
+        st.style.color = data.model_warning ? 'var(--yellow)' : 'var(--green)';
+      }
       llmShowModelPicker(row, data.base_url, data.models);
+      llmProfileModelWarning(row);
     } else {
       if (st) { st.textContent = '⚠️ Нет моделей'; st.style.color = 'var(--yellow)'; }
     }
@@ -978,6 +1020,12 @@ async function _llmSaveImpl(btn) {
         api_key: profiles[0]?.api_key || '',
         base_url: profiles[0]?.base_url || '',
         model: profiles[0]?.model || '',
+        candidate_profile: Object.fromEntries(
+          [...document.querySelectorAll('.llm-candidate-fact')]
+            .map(el => [el.dataset.fact, (el.value || '').trim()])
+            .filter(([, value]) => value)
+        ),
+        auto_send_min_confidence: parseFloat(document.getElementById('llm-auto-send-confidence')?.value || '0.88'),
       })
     });
     if (!res.ok) throw new Error(`config HTTP ${res.status}`);
@@ -1050,7 +1098,8 @@ function _isLlmAutoField(t) {
   if (!t || !t.classList) return false;
   return t.classList.contains('lp-name') || t.classList.contains('lp-key') ||
          t.classList.contains('lp-url') || t.classList.contains('lp-model') ||
-         t.classList.contains('lp-enabled') || t.id === 'llm-system-prompt';
+         t.classList.contains('lp-enabled') || t.classList.contains('llm-candidate-fact') ||
+         t.id === 'llm-system-prompt' || t.id === 'llm-auto-send-confidence';
 }
 document.addEventListener('change', (e) => { if (_isLlmAutoField(e.target)) _llmAutoSave(); }, true);
 document.addEventListener('input',  (e) => { if (_isLlmAutoField(e.target)) _llmAutoSave(); }, true);
@@ -1065,10 +1114,10 @@ function _llmDetectProvider(key) {
   if (k.startsWith('sk-or-'))   return {name:'OpenRouter', base_url:'https://openrouter.ai/api/v1', model:'openai/gpt-4o-mini'};
   if (k.startsWith('sk-ant-'))  return {name:'Anthropic',  base_url:'https://api.anthropic.com/v1', model:'claude-haiku-4-5-20251001'};
   if (k.startsWith('sk-proj-')) return {name:'OpenAI',     base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
-  if (k.startsWith('gsk_'))     return {name:'Groq',       base_url:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile'};
-  if (k.startsWith('AIza'))     return {name:'Gemini',     base_url:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-2.0-flash'};
+  if (k.startsWith('gsk_'))     return {name:'Groq',       base_url:'https://api.groq.com/openai/v1', model:'openai/gpt-oss-120b'};
+  if (k.startsWith('AIza'))     return {name:'Gemini',     base_url:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-3.8-flash'};
   if (k.startsWith('hf_'))      return {name:'HuggingFace',base_url:'https://api-inference.huggingface.co/v1', model:'meta-llama/Llama-3.3-70B-Instruct'};
-  if (k.startsWith('sk-') && k.length < 45) return {name:'DeepSeek', base_url:'https://api.deepseek.com', model:'deepseek-chat'};
+  if (k.startsWith('sk-') && k.length < 45) return {name:'DeepSeek', base_url:'https://api.deepseek.com', model:'deepseek-v4-flash'};
   if (k.startsWith('sk-'))      return {name:'OpenAI',     base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
   return {name:'Custom', base_url:'https://api.openai.com/v1', model:'gpt-4o-mini'};
 }
@@ -1183,6 +1232,14 @@ function syncLlmSettings(snap) {
     if (rvM && cfg.related_vacancies_enabled !== undefined) rvM.checked = cfg.related_vacancies_enabled;
   }
   if (modeEl && cfg.llm_profile_mode) modeEl.value = cfg.llm_profile_mode;
+  if (!_llmSettingsEditing) {
+    const facts = cfg.llm_candidate_profile || {};
+    document.querySelectorAll('.llm-candidate-fact').forEach(el => {
+      if (document.activeElement !== el) el.value = facts[el.dataset.fact] || '';
+    });
+    const conf = document.getElementById('llm-auto-send-confidence');
+    if (conf && document.activeElement !== conf) conf.value = cfg.llm_auto_send_min_confidence ?? 0.88;
+  }
   // Update the global toggle button
   if (cfg.llm_enabled !== undefined) _llmUpdateToggleBtn(cfg.llm_enabled);
   // Syncим текстовый промпт из конфига — но не во время редактирования и
@@ -1415,16 +1472,7 @@ function syncScheduleSettings(snap) {
   // Баннер «есть несохранённые черновики»: показываем когда auto_send выкл
   // и в llm_log есть незаотправленные записи. Чтобы юзер не пропустил что
   // бот сгенерил кучу ответов и сидит ждёт флипа.
-  const draftsBanner = document.getElementById('llm-drafts-pending-banner');
-  if (draftsBanner) {
-    const autoSendOn = cfg.llm_auto_send === true;
-    const llmLog = State.lastSnapshot?.llm_log || [];
-    const draftsCount = llmLog.filter(r => !r.sent).length;
-    draftsBanner.style.display = (!autoSendOn && draftsCount > 0) ? '' : 'none';
-    if (!autoSendOn && draftsCount > 0) {
-      draftsBanner.innerHTML = `📝 <b>Есть ${draftsCount} несохранённых черновиков</b> — включи «Автоотправка» (чекбокс ниже) и они уйдут на следующем цикле без новых LLM-вызовов.`;
-    }
-  }
+  _renderLlmDraftBanner(snap);
   // Smart search filters
   const fa = document.getElementById('filter-agencies');
   if (fa && cfg.filter_agencies !== undefined) fa.checked = cfg.filter_agencies;
@@ -1632,10 +1680,11 @@ function updateLlmStatusBar(snap) {
   const pendingByAcc = accs.reduce((s, a) => s + (a.llm_pending_chats || 0), 0);
   stChats.textContent = `🎯 ${totalInterviews} интервью${pendingByAcc ? ` · ⏳ ${pendingByAcc} в обработке` : ''}`;
 
-  // Replied count from llm_log
-  const sentCount = llmLog.filter(l => l.sent).length;
-  const draftCount = llmLog.filter(l => !l.sent).length;
-  const draftHint = draftCount && !autoSend ? ' ← ждут «Автоотправку»' : '';
+  // Persisted summary survives process restarts; llm_log is only the live-session fallback.
+  const {drafts: draftCount, reviews: reviewCount, replied: sentCount} = _llmDraftCounts(snap);
+  const draftHint = autoSend
+    ? (reviewCount ? ` ← ${reviewCount} требуют проверки` : '')
+    : (draftCount ? ' ← Auto safe выключен' : '');
   stReplied.textContent = `✅ ${sentCount} отправлено · 📝 ${draftCount} черновиков${draftHint}`;
   const stProvider = document.getElementById('llm-st-provider');
   const stLast = document.getElementById('llm-st-last');
@@ -1654,6 +1703,37 @@ function oauthToggleAccount(idx, btn) {
 
 // ── LLM tab: interviews from DB ───────────────────────────────
 let _llmRowsCache = [];
+let _llmPersistedSummary = null;
+
+function _llmDraftCounts(snap) {
+  const llmLog = snap?.llm_log || [];
+  const fallbackDrafts = llmLog.filter(l => !l.sent).length;
+  const fallbackReviews = llmLog.filter(l => !l.sent && String(l.source || '').includes('review')).length;
+  const fallbackReplied = llmLog.filter(l => l.sent).length;
+  const summary = _llmPersistedSummary;
+  const persistedDrafts = Number(summary?.drafts);
+  const persistedReviews = Number(summary?.reviews);
+  const persistedReplied = Number(summary?.replied);
+  return {
+    drafts: Number.isFinite(persistedDrafts) ? Math.max(fallbackDrafts, Math.max(0, persistedDrafts)) : fallbackDrafts,
+    reviews: Number.isFinite(persistedReviews) ? Math.max(fallbackReviews, Math.max(0, persistedReviews)) : fallbackReviews,
+    replied: Number.isFinite(persistedReplied) ? Math.max(fallbackReplied, Math.max(0, persistedReplied)) : fallbackReplied,
+  };
+}
+
+function _renderLlmDraftBanner(snap) {
+  const draftsBanner = document.getElementById('llm-drafts-pending-banner');
+  if (!draftsBanner) return;
+  const autoSendOn = snap?.config?.llm_auto_send === true;
+  const {drafts: draftsCount, reviews: reviewCount} = _llmDraftCounts(snap);
+  const visibleCount = autoSendOn ? reviewCount : draftsCount;
+  draftsBanner.style.display = visibleCount > 0 ? '' : 'none';
+  if (visibleCount > 0) {
+    draftsBanner.innerHTML = autoSendOn
+      ? `<b>${reviewCount} черновиков требуют ручной проверки</b> - Auto safe не отправил их из-за policy gate.`
+      : `<b>${draftsCount} черновиков на проверке</b> - при включении Auto safe новый ответ всё равно будет заново проверен перед отправкой.`;
+  }
+}
 
 // Кэш рейтингов работодателей: vacancy_id → {total, recommend_pct, name} | null.
 // Бэкенд тоже кэширует 24ч, но клиентский кэш экономит сетевой round-trip
@@ -1769,10 +1849,19 @@ async function llmInterviewsLoad() {
   const acc = document.getElementById('llm-log-acc-filter')?.value || '';
   const statusF = document.getElementById('llm-log-sent-filter')?.value || '';
   let url = `/api/interviews?limit=10000${acc ? '&acc=' + encodeURIComponent(acc) : ''}${statusF ? '&status=' + encodeURIComponent(statusF) : ''}`;
+  const summaryUrl = `/api/interviews/summary${acc ? '?acc=' + encodeURIComponent(acc) : ''}`;
   let rows;
+  _llmPersistedSummary = null;
   try {
-    const res = await fetch(url);
+    const [res, summaryRes] = await Promise.all([
+      fetch(url),
+      fetch(summaryUrl).catch(() => null),
+    ]);
     rows = await res.json();
+    if (summaryRes?.ok) {
+      const summary = await summaryRes.json();
+      if (summary && typeof summary === 'object') _llmPersistedSummary = summary;
+    }
     _llmLastDbRefresh = Date.now();
   } catch(e) {
     _llmLoading = false;
@@ -1782,10 +1871,27 @@ async function llmInterviewsLoad() {
   }
   _llmRowsCache = Array.isArray(rows) ? rows : [];
   llmInterviewsRender();
+  _renderLlmDraftBanner(State.lastSnapshot);
+  updateLlmStatusBar(State.lastSnapshot);
   // HR-ссылки (Google Forms / Yandex Forms / Telegram / etc.) — извлекаем при
   // каждой перезагрузке interviews. Отдельный рендер, чтобы фильтры/сортировка
   // основной таблицы не перезаписывали блок ссылок.
   _llmRenderHrLinks(_llmRowsCache);
+}
+
+async function llmCopyDraft(btn) {
+  const text = decodeURIComponent(btn?.dataset?.draft || '');
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const old = btn.textContent;
+    btn.textContent = '✅ Скопировано';
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  } catch(e) {
+    const area = document.createElement('textarea');
+    area.value = text; area.style.position = 'fixed'; area.style.opacity = '0';
+    document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+  }
 }
 
 function llmInterviewsRender() {
@@ -1871,6 +1977,10 @@ function llmInterviewsRender() {
   tbody.innerHTML = rows.map(r => {
     const empMsg = esc(r.employer_last_msg || '—').replace(/\n/g, '<br>');
     const botReply = esc(r.llm_reply || '').replace(/\n/g, '<br>');
+    const reviewMeta = r.status === 'draft' && (r.llm_category || r.llm_review_reason)
+      ? `<div style="font-size:10px;color:var(--yellow);margin-top:5px">🧪 ${esc(r.llm_category || 'review')}${r.llm_review_reason ? ' · ' + esc(r.llm_review_reason) : ''}</div>` : '';
+    const draftActions = r.status === 'draft' && r.llm_reply
+      ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn-sm" data-draft="${encodeURIComponent(r.llm_reply)}" onclick="llmCopyDraft(this)">📋 Копировать</button>${r.neg_id ? ` <a class="btn-sm" href="https://hh.ru/chat/${encodeURIComponent(r.neg_id)}" target="_blank" rel="noopener">Открыть чат HH ↗</a>` : ''}</div>` : '';
     const negLink = r.neg_id
       ? `<a href="https://hh.ru/chat/${encodeURIComponent(r.neg_id)}" target="_blank" style="font-size:10px;color:var(--cyan)">🔗</a>` : '';
     const dateStr = (r.last_seen || r.first_seen || '').replace('T', ' ').slice(0, 16);
@@ -1884,7 +1994,7 @@ function llmInterviewsRender() {
       <td style="font-size:11px">${esc(r.employer||'')} ${negLink}${ratingSlot}</td>
       <td style="font-size:11px;color:var(--dim)">${esc(r.vacancy_title||'')}</td>
       <td class="llm-msg-cell">${empMsg}</td>
-      <td class="llm-reply-cell">${botReply}</td>
+      <td class="llm-reply-cell">${botReply}${reviewMeta}${draftActions}</td>
       <td>${statusBadge(r.status)}</td>
       <td>${chatBadge(r.chat_status || '')}</td>
     </tr>`;

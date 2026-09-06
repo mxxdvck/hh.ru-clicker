@@ -21,7 +21,7 @@ from app.user_agent import webview_user_agent
 from app.hh_api import get_headers
 from app.oauth import _oauth_touch_resume, _token_key
 from app.questionnaire import _parse_questionnaire_fields, _parse_questionnaire_rich
-from app.llm import _randomize_text, generate_llm_questionnaire_answers, get_llm_last_status
+from app.llm import _randomize_text, generate_llm_questionnaire_decisions, get_llm_last_status
 from app.hh_resume import fetch_resume_text
 
 _HH_DEFAULT_TIMEOUT = 15
@@ -216,7 +216,7 @@ async def generate_hh_ai_letter(acc: dict, resume_hash: str, vid: str, timeout_s
             log_debug(f"hhpro_ai_letter {vid}: service_already_used — эту пару уже использовали, юзаем шаблон")
             return ""
         if r.status_code not in (200, 202):
-            log_debug(f"hhpro_ai_letter {vid}: HTTP {r.status_code}, body={r.text[:150]}")
+            log_debug(f"hhpro_ai_letter {vid}: HTTP {r.status_code}, body_len={len(r.text or '')}")
             return ""
     except Exception as e:
         log_debug(f"hhpro_ai_letter start {vid}: {e}")
@@ -362,14 +362,19 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
 
             # Парсим все поля опроса
             questions, field_answers = _parse_questionnaire_fields(html)
+            llm_resolved_fields: set[str] = set()
+            rich_qs = _parse_questionnaire_rich(html)
+            expected_fields = [
+                str(q.get("field") or "").strip()
+                for q in rich_qs
+                if str(q.get("field") or "").strip()
+            ]
 
-            if not field_answers:
+            if not expected_fields:
                 log_debug(f"Questionnaire: no task fields found for {vid}")
                 return "test", {}
 
-            # LLM-заполнение опросника (если включено)
             if CONFIG.llm_fill_questionnaire and CONFIG.llm_enabled and questions:
-                rich_qs = _parse_questionnaire_rich(html)
                 resume_text = ""
                 if CONFIG.llm_use_resume:
                     # fetch_resume_text — sync requests.get с 15s timeout.
@@ -378,12 +383,24 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                     resume_text = await _aio.get_event_loop().run_in_executor(None, fetch_resume_text, acc)
                 # generate_llm_questionnaire_answers тоже sync (OpenAI client).
                 import asyncio as _aio2
-                llm_ans = await _aio2.get_event_loop().run_in_executor(
+                llm_batch = await _aio2.get_event_loop().run_in_executor(
                     None,
-                    lambda: generate_llm_questionnaire_answers(
+                    lambda: generate_llm_questionnaire_decisions(
                         rich_qs, vacancy_title, company, resume_text=resume_text, account_key=f"questionnaire:{vid}"
                     ),
                 )
+                if llm_batch.status != "ok":
+                    review_fields = list(llm_batch.review_fields or [])
+                    log_debug(
+                        f"Questionnaire {vid}: Phase 4 review required status={llm_batch.status} "
+                        f"fields={review_fields} reason={llm_batch.reason[:180]}"
+                    )
+                    return "test", {
+                        "error_type": "questionnaire_review_required",
+                        "review_fields": review_fields,
+                        "review_reason": llm_batch.reason,
+                    }
+                llm_ans = llm_batch.answers
                 if llm_ans:
                     # Validate LLM answers against actual options
                     rich_fields = {q["field"]: q for q in rich_qs}
@@ -416,7 +433,7 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                             if picked:
                                 validated_ans[field] = picked
                             else:
-                                log_debug(f"LLM checkbox {field}: nothing matched in {llm_val} vs {valid_values}")
+                                log_debug(f"LLM checkbox {field}: no option matched; candidates={len(valid_values)}")
                             continue
                         # Scalar option (radio/select or single checkbox value as string)
                         if not isinstance(llm_val, (str, int, float, bool)):
@@ -430,11 +447,14 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                             if fuzzy:
                                 validated_ans[field] = fuzzy[0]
                             else:
-                                log_debug(f"LLM answer '{s}' not in options {valid_values}, skipping field {field}")
-                    overridden = [f for f in validated_ans if f in field_answers]
-                    for f in overridden:
+                                log_debug(f"LLM answer did not match options for {field}; candidates={len(valid_values)}")
+                    accepted = [f for f in validated_ans if f in rich_fields]
+                    llm_resolved_fields.update(accepted)
+                    for f in accepted:
                         field_answers[f] = validated_ans[f]
-                    log_debug(f"Questionnaire {vid}: LLM заполнил {len(overridden)}/{len(field_answers)} полей: {overridden}")
+                    log_debug(
+                        f"Questionnaire {vid}: LLM safely resolved {len(accepted)}/{len(expected_fields)} fields: {accepted}"
+                    )
                 else:
                     llm_status = get_llm_last_status(f"questionnaire:{vid}", "questionnaire")
                     provider = llm_status.get("provider") or "unknown"
@@ -447,9 +467,37 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                             f"(provider={provider}, status={status}), используем шаблоны"
                         )
 
-            log_debug(f"Questionnaire {vid}: {len(field_answers)} fields, {len(questions)} questions")
-            for name, val in field_answers.items():
-                log_debug(f"  {name} = {str(val)[:80]}")
+            def _resolved_questionnaire_value(value) -> bool:
+                if isinstance(value, list):
+                    return bool(value) and all(str(item).strip() for item in value)
+                return bool(str(value or "").strip())
+
+            unresolved_fields = [
+                field for field in expected_fields
+                if field not in field_answers or not _resolved_questionnaire_value(field_answers.get(field))
+            ]
+            if unresolved_fields:
+                log_debug(f"Questionnaire {vid}: refusing auto-submit; unresolved fields={unresolved_fields}")
+                return "test", {
+                    "error_type": "questionnaire_review_required",
+                    "review_fields": unresolved_fields,
+                    "review_reason": "one or more questionnaire fields are unresolved",
+                }
+
+            submitted_fields = set(field_answers)
+            submit_info = {
+                "questionnaire_fields": len(submitted_fields),
+                "questionnaire_llm_fields": len(submitted_fields & llm_resolved_fields),
+                "questionnaire_rule_fields": len(submitted_fields - llm_resolved_fields),
+            }
+            log_debug(
+                f"Questionnaire {vid}: {submit_info['questionnaire_fields']} fields; "
+                f"llm={submit_info['questionnaire_llm_fields']} rules={submit_info['questionnaire_rule_fields']}"
+            )
+            for name, value in field_answers.items():
+                source = "llm" if name in llm_resolved_fields else "rules"
+                value_count = len(value) if isinstance(value, list) else 1
+                log_debug(f"  field={name} source={source} values={value_count}")
 
             # Шаг 2: POST данные
             data = aiohttp.FormData()
@@ -495,14 +543,14 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                 if "withoutTest=no" in location or f"vacancyId={vid}" in location:
                     log_debug(f"Questionnaire {vid}: form rejected, redirect back")
                     return "test", {}
-                return "sent", {}
+                return "sent", submit_info
 
             if status == 200:
                 if "negotiations-limit-exceeded" in txt:
                     return "limit", {}
                 if "test-required" in txt:
                     return "test", {}
-                return "sent", {}
+                return "sent", submit_info
 
             return "error", {"http_status": status, "transient": status >= 500}
 

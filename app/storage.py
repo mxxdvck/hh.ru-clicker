@@ -317,7 +317,8 @@ def upsert_interview(neg_id: str, acc: str, acc_color: str = "",
                      llm_reply: str = None, llm_sent: bool = None,
                      chat_not_found: bool = None, chat_status: str = None,
                      replied_msg_id: str = None,
-                     vacancy_id: str = ""):
+                     vacancy_id: str = "", llm_source: str = None,
+                     llm_category: str = None, llm_review_reason: str = None):
     """Создать или обновить запись об интервью-переговоре."""
     global _interviews_dirty, _interviews_mut_seq
     _load_cache()
@@ -349,6 +350,12 @@ def upsert_interview(neg_id: str, acc: str, acc_color: str = "",
         if llm_reply is not None:
             record["llm_reply"] = llm_reply
             record["llm_reply_date"] = now
+        if llm_source is not None:
+            record["llm_source"] = str(llm_source)[:80]
+        if llm_category is not None:
+            record["llm_category"] = str(llm_category)[:80]
+        if llm_review_reason is not None:
+            record["llm_review_reason"] = str(llm_review_reason)[:500]
         if llm_sent is not None:
             # Never downgrade: once llm_sent=True, keep it
             if not record.get("llm_sent"):
@@ -437,6 +444,29 @@ def get_replied_keys(since: datetime = None) -> set:
                 if last_id:
                     keys.add((str(nid), str(last_id)))
         return keys
+
+
+def get_interviews_summary(acc: str = "") -> dict:
+    """Return persisted interview counters used by the LLM review UI."""
+    _load_cache()
+    with _cache_lock:
+        items = list(_cache_interviews.values())
+    if acc:
+        items = [record for record in items if record.get("acc") == acc]
+
+    drafts = [record for record in items if record.get("status") == "draft"]
+    reviews = [
+        record for record in drafts
+        if "review" in str(record.get("llm_source") or "").lower()
+        or bool(str(record.get("llm_review_reason") or "").strip())
+    ]
+    return {
+        "total": len(items),
+        "drafts": len(drafts),
+        "reviews": len(reviews),
+        "pending": sum(record.get("status") == "pending_reply" for record in items),
+        "replied": sum(record.get("status") == "replied" for record in items),
+    }
 
 
 def get_interviews_list(acc: str = "", limit: int = 2000, status: str = "") -> list:
