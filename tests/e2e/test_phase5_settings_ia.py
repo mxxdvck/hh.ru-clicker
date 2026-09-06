@@ -32,7 +32,7 @@ def test_phase5_settings_toolbar_has_search_groups_and_save_semantics(ui):
         expect(page.get_by_test_id(f"phase5-settings-group-{group}")).to_be_visible()
 
     hint = page.get_by_test_id("phase5-settings-save-hint")
-    expect(hint).to_contain_text("сохраняются сразу")
+    expect(hint).to_contain_text("применяются сразу")
     expect(hint).to_contain_text("Сохранить")
     expect(hint).to_contain_text("Применить")
 
