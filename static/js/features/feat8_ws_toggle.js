@@ -2,7 +2,7 @@
  * Feature 8: WebSocket toggle + Project Phase 5 baseline compatibility layer.
  *
  * This file is already loaded after app.js and the inline websocket helpers,
- * which makes it a safe additive place for Phase 5A accessibility/bootstrap
+ * which makes it a safe additive place for Phase 5 accessibility/bootstrap
  * work without rewriting index.html or the main render pipeline.
  */
 (function () {
@@ -115,7 +115,6 @@
     syncGlobalCheckbox();
   }
 
-  /* Project Phase 5A: additive accessibility and test hooks. */
   var PHASE5_TEST_IDS = {
     'pause-btn': 'global-pause',
     'apply-mode-badge': 'apply-mode',
@@ -200,6 +199,47 @@
     addCriticalTestIds();
   }
 
+  function ensureStylesheet(id, href) {
+    if (document.getElementById(id)) return;
+    var link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function loadScriptOnce(id, src) {
+    return new Promise(function (resolve, reject) {
+      var existing = document.getElementById(id);
+      if (existing) {
+        if (existing.dataset.loaded === '1') resolve();
+        else existing.addEventListener('load', resolve, { once: true });
+        return;
+      }
+      var script = document.createElement('script');
+      script.id = id;
+      script.src = src;
+      script.defer = true;
+      script.addEventListener('load', function () {
+        script.dataset.loaded = '1';
+        resolve();
+      }, { once: true });
+      script.addEventListener('error', function () { reject(new Error('asset load failed: ' + src)); }, { once: true });
+      document.body.appendChild(script);
+    });
+  }
+
+  function loadPhase5Ui() {
+    ensureStylesheet('phase5-shell-css', '/static/css/phase5-shell.css');
+    return loadScriptOnce('phase5-ui-core-script', '/static/js/ui/core.js')
+      .then(function () {
+        return loadScriptOnce('phase5-ui-navigation-script', '/static/js/ui/navigation.js');
+      })
+      .catch(function (error) {
+        console.error('Phase5 UI bootstrap:', error);
+      });
+  }
+
   wrapGlobal('wsFetchStatus', function (orig) {
     return function () {
       return Promise.resolve(orig.apply(this, arguments)).then(function (data) {
@@ -247,6 +287,7 @@
     safe(injectGlobalToggle, null);
     safe(syncGlobalCheckbox, null);
     safe(installPhase5Baseline, null);
+    safe(function () { loadPhase5Ui(); }, null);
   }
 
   if (document.readyState === 'loading') {
