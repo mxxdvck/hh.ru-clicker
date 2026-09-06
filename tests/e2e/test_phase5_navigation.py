@@ -18,6 +18,11 @@ def _wait_for_shell(page):
     expect(page.locator("#phase5-primary-nav [data-section]")).to_have_count(6)
 
 
+def _expect_active(locator):
+    expect(locator).to_have_attribute("aria-current", "page")
+    assert "active" in (locator.get_attribute("class") or "").split()
+
+
 def test_phase5_shell_has_six_primary_destinations(ui):
     ui.open()
     page = ui.page
@@ -37,12 +42,12 @@ def test_phase5_primary_navigation_reuses_legacy_panels(ui):
 
     page.get_by_test_id("phase5-nav-vacancies").click()
     expect(page.locator("#panel-db")).to_be_visible()
-    expect(page.get_by_test_id("phase5-nav-vacancies")).to_have_class("active")
+    _expect_active(page.get_by_test_id("phase5-nav-vacancies"))
     assert page.evaluate("location.hash") == "#vacancies/db"
 
     page.get_by_test_id("phase5-nav-communications").click()
     expect(page.locator("#panel-llm")).to_be_visible()
-    expect(page.get_by_test_id("phase5-nav-communications")).to_have_class("active")
+    _expect_active(page.get_by_test_id("phase5-nav-communications"))
     assert page.evaluate("location.hash") == "#communications/llm"
 
 
@@ -58,7 +63,7 @@ def test_phase5_legacy_tab_updates_primary_section_and_emits_event(ui):
     page.get_by_test_id("legacy-tab-hh").click()
 
     expect(page.locator("#panel-hh")).to_be_visible()
-    expect(page.get_by_test_id("phase5-nav-applications")).to_have_class("active")
+    _expect_active(page.get_by_test_id("phase5-nav-applications"))
     event = page.wait_for_function("window.__phase5LastTabEvent !== null").json_value()
     assert event["section"] == "applications"
     assert event["tab"] == "hh"
@@ -71,11 +76,11 @@ def test_phase5_hash_deep_links_and_legacy_aliases(ui):
 
     page.evaluate("location.hash = '#communications/hedi'")
     expect(page.locator("#panel-hedi")).to_be_visible()
-    expect(page.get_by_test_id("phase5-nav-communications")).to_have_class("active")
+    _expect_active(page.get_by_test_id("phase5-nav-communications"))
 
     page.evaluate("location.hash = '#activity'")
     expect(page.locator("#panel-log")).to_be_visible()
-    expect(page.get_by_test_id("phase5-nav-overview")).to_have_class("active")
+    _expect_active(page.get_by_test_id("phase5-nav-overview"))
 
 
 def test_phase5_shell_stays_horizontally_reachable_on_mobile(ui):
