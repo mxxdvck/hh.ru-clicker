@@ -137,3 +137,33 @@ def test_general_first_person_fact_without_evidence_requires_review():
         trusted_context="",
     )
     assert d.auto_send_allowed is False
+
+
+def test_relocation_answer_cannot_contradict_trusted_profile():
+    d = policy.evaluate_reply_decision(
+        _decision(answer="Yes, I can relocate.", category="relocation", evidence=["relocation: no"]),
+        employer_text="Are you ready to relocate?",
+        trusted_context="relocation: no",
+    )
+    assert d.auto_send_allowed is False
+    assert "consistent" in d.reason
+
+
+def test_work_format_answer_cannot_contradict_trusted_profile():
+    d = policy.evaluate_reply_decision(
+        _decision(answer="Office works for me.", category="schedule", evidence=["work_format: remote"]),
+        employer_text="Are you comfortable working from the office?",
+        trusted_context="work_format: remote",
+    )
+    assert d.auto_send_allowed is False
+    assert "consistent" in d.reason
+
+
+def test_experience_answer_needs_more_than_generic_matching_evidence():
+    d = policy.evaluate_reply_decision(
+        _decision(answer="I led ERP migrations.", category="experience", evidence=["ERP integrations"]),
+        employer_text="Did you lead ERP migrations?",
+        trusted_context="Built ERP integrations and exchange jobs.",
+    )
+    assert d.auto_send_allowed is False
+    assert "grounded" in d.reason

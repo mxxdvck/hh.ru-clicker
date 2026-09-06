@@ -94,88 +94,57 @@ def _parse_questionnaire_fields(html: str) -> tuple:
     return questions, field_answers
 
 def _parse_questionnaire_rich(html: str) -> list:
-    """Парсит форму опросника и возвращает богатую структуру для LLM:
-    list of {field, type, text, options: [{value, label}]}
-    """
+    """Parse questionnaire fields in DOM order, preserving question-to-field mapping."""
     soup = BeautifulSoup(html, "html.parser")
+    task_name = re.compile(r"task_\d+")
+    textarea_name = re.compile(r"task_\d+_text")
 
-    q_blocks = soup.find_all(attrs={"data-qa": "task-question"})
-    q_texts = []
-    for b in q_blocks:
-        c = b.get_text(separator=' ', strip=True)
-        q_texts.append(c)
-
-    result = []
-    q_idx = 0
-
-    for textarea in soup.find_all("textarea", attrs={"name": re.compile(r"task_\d+_text")}):
-        name = textarea.get("name")
-        result.append({"field": name, "type": "textarea",
-                       "text": q_texts[q_idx] if q_idx < len(q_texts) else "", "options": []})
-        q_idx += 1
-
-    radio_groups: dict = {}      # name -> [value, ...]
-    radio_value_label: dict = {}  # (name, value) -> label_text
-    radio_order: list = []
-    for inp in soup.find_all("input", attrs={"type": "radio", "name": re.compile(r"task_\d+")}):
-        n = inp.get("name")
-        v = inp.get("value")
-        if not (n and v):
-            continue
-        if n not in radio_groups:
-            radio_groups[n] = []
-            radio_order.append(n)
-        radio_groups[n].append(v)
+    def _label_for_input(inp, fallback: str) -> str:
         inp_id = inp.get("id")
         if inp_id:
             label = soup.find("label", attrs={"for": inp_id})
             if label:
-                lbl_text = label.get_text(strip=True)
-                if lbl_text:
-                    radio_value_label[(n, v)] = lbl_text
+                text = label.get_text(" ", strip=True)
+                if text:
+                    return text
+        return fallback
 
-    default_labels = ["да", "нет"]
-    for name in radio_order:
-        vals = radio_groups[name]
-        options = [
-            {"value": v,
-             "label": radio_value_label.get((name, v), default_labels[i] if i < len(default_labels) else v)}
-            for i, v in enumerate(vals)
-        ]
-        result.append({"field": name, "type": "radio",
-                       "text": q_texts[q_idx] if q_idx < len(q_texts) else "", "options": options})
-        q_idx += 1
+    def _question_text(anchor) -> str:
+        block = anchor.find_parent(attrs={"data-qa": "task-question"})
+        if block is None:
+            block = anchor.find_previous(attrs={"data-qa": "task-question"})
+        return block.get_text(" ", strip=True) if block is not None else ""
 
-    checkbox_groups: dict = {}
-    checkbox_order: list = []
-    for inp in soup.find_all("input", attrs={"type": "checkbox", "name": re.compile(r"task_\d+")}):
-        n = inp.get("name")
-        v = inp.get("value")
-        if not (n and v):
+    grouped: dict[str, dict] = {}
+    ordered_names: list[str] = []
+    for node in soup.find_all(["textarea", "input", "select"]):
+        name = str(node.get("name") or "")
+        qtype = ""
+        if node.name == "textarea" and textarea_name.fullmatch(name):
+            qtype = "textarea"
+        elif node.name == "input" and task_name.fullmatch(name):
+            input_type = str(node.get("type") or "").lower()
+            if input_type in {"radio", "checkbox"}:
+                qtype = input_type
+        elif node.name == "select" and task_name.fullmatch(name):
+            qtype = "select"
+        if not qtype:
             continue
-        if n not in checkbox_groups:
-            checkbox_groups[n] = []
-            checkbox_order.append(n)
-        checkbox_groups[n].append(v)
 
-    for name in checkbox_order:
-        vals = checkbox_groups[name]
-        options = [{"value": v, "label": v} for v in vals]
-        result.append({"field": name, "type": "checkbox",
-                       "text": q_texts[q_idx] if q_idx < len(q_texts) else "", "options": options})
-        q_idx += 1
+        if name not in grouped:
+            grouped[name] = {"field": name, "type": qtype, "text": _question_text(node), "options": []}
+            ordered_names.append(name)
+        entry = grouped[name]
+        if entry["type"] != qtype:
+            continue
+        if qtype in {"radio", "checkbox"}:
+            value = str(node.get("value") or "")
+            if value:
+                entry["options"].append({"value": value, "label": _label_for_input(node, value)})
+        elif qtype == "select":
+            entry["options"] = [
+                {"value": str(opt.get("value") or ""), "label": opt.get_text(" ", strip=True)}
+                for opt in node.find_all("option")
+            ]
 
-    # Select (dropdown) fields
-    for sel in soup.find_all("select", attrs={"name": re.compile(r"task_\d+")}):
-        sel_name = sel.get("name")
-        options = []
-        for opt in sel.find_all("option"):
-            val = opt.get("value", "")
-            label = opt.get_text(strip=True)
-            options.append({"value": val, "label": label})
-        q_text = q_texts[q_idx] if q_idx < len(q_texts) else ""
-        q_idx += 1
-        result.append({"field": sel_name, "type": "select", "text": q_text,
-                       "options": options})
-
-    return result
+    return [grouped[name] for name in ordered_names]

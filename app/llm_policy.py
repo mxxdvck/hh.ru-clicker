@@ -141,6 +141,137 @@ def _has_relevant_evidence(evidence: list[str], category: str, employer_text: st
     return any(_norm(item).startswith(prefix) for item in evidence for prefix in prefixes)
 
 
+def _relevant_profile_values(evidence: list[str], category: str, employer_text: str) -> list[tuple[str, str]]:
+    prefixes = _evidence_prefixes_for(category, employer_text)
+    out: list[tuple[str, str]] = []
+    for item in evidence:
+        normalized = _norm(item)
+        for prefix in prefixes:
+            if normalized.startswith(prefix):
+                value = normalized[len(prefix):].strip()
+                if value:
+                    out.append((prefix[:-1], value))
+                break
+    return out
+
+
+def _polarity(text: str) -> int:
+    value = _norm(text)
+    negative = (
+        r"\b(?:no|not|cannot|can't|won't|\u043d\u0435\u0442)\b",
+        r"\b\u043d\u0435\s+(?:\u0433\u043e\u0442\u043e\u0432\w*|\u043c\u043e\u0433\u0443|\u0441\u043e\u0433\u043b\u0430\u0441\w*|\u0440\u0430\u0441\u0441\u043c\u0430\u0442\u0440\u0438\u0432\u0430\w*)\b",
+    )
+    positive = (
+        r"\b(?:yes|ready|can|\u0434\u0430|\u043c\u043e\u0433\u0443|\u0441\u043e\u0433\u043b\u0430\u0441\w*|\u0440\u0430\u0441\u0441\u043c\u0430\u0442\u0440\u0438\u0432\u0430\w*|\u0433\u043e\u0442\u043e\u0432\w*)\b",
+    )
+    if any(re.search(pattern, value, flags=re.I) for pattern in negative):
+        return -1
+    if any(re.search(pattern, value, flags=re.I) for pattern in positive):
+        return 1
+    return 0
+
+
+def _semantic_tags(text: str) -> set[str]:
+    value = _norm(text)
+    tags = set()
+    aliases = {
+        "remote": ("remote", "\u0443\u0434\u0430\u043b\u0435\u043d", "\u0434\u0438\u0441\u0442\u0430\u043d\u0446"),
+        "office": ("office", "\u043e\u0444\u0438\u0441"),
+        "hybrid": ("hybrid", "\u0433\u0438\u0431\u0440\u0438\u0434"),
+        "moscow_time": ("moscow", "\u043c\u043e\u0441\u043a", "\u043c\u0441\u043a"),
+    }
+    for tag, markers in aliases.items():
+        if any(marker in value for marker in markers):
+            tags.add(tag)
+    return tags
+
+
+_CLAIM_STOPWORDS = {
+    "i", "my", "have", "has", "had", "with", "and", "the", "a", "an", "to", "of", "in",
+    "work", "worked", "working", "experience", "yes", "no", "ready", "can",
+    "\u044f", "\u043c\u043e\u0439", "\u043c\u043e\u044f", "\u043c\u043e\u0438", "\u0443", "\u043c\u0435\u043d\u044f", "\u0435\u0441\u0442\u044c", "\u0438\u043c\u0435\u044e", "\u0441", "\u0438", "\u0432", "\u043d\u0430", "\u043f\u043e", "\u043a", "\u0434\u043b\u044f",
+    "\u0440\u0430\u0431\u043e\u0442\u0430\u043b", "\u0440\u0430\u0431\u043e\u0442\u0430\u043b\u0430", "\u0440\u0430\u0431\u043e\u0442\u0430\u044e", "\u043e\u043f\u044b\u0442", "\u0434\u0430", "\u043d\u0435\u0442", "\u0433\u043e\u0442\u043e\u0432", "\u0433\u043e\u0442\u043e\u0432\u0430", "\u043c\u043e\u0433\u0443",
+}
+
+
+def _claim_tokens(text: str) -> set[str]:
+    tokens = set()
+    for word in re.findall(r"[a-z\u0430-\u044f\u04510-9]+", _norm(text), flags=re.I):
+        if word in _CLAIM_STOPWORDS:
+            continue
+        if len(word) < 3 and not any(ch.isdigit() for ch in word):
+            continue
+        tokens.add(word if len(word) <= 6 else word[:6])
+    return tokens
+
+
+def _factual_claim_grounded(answer: str, trusted_context: str) -> bool:
+    claims = _claim_tokens(answer)
+    if not claims:
+        return True
+    trusted = _claim_tokens(trusted_context)
+    if not trusted:
+        return False
+    return len(claims & trusted) / len(claims) >= (2 / 3)
+
+
+def _profile_value_consistent(answer: str, evidence: list[str], category: str, employer_text: str) -> bool:
+    entries = _relevant_profile_values(evidence, category, employer_text)
+    if not entries:
+        return False
+    answer_norm = _norm(answer)
+    employer_norm = _norm(employer_text)
+    answer_polarity = _polarity(answer_norm)
+    any_match = False
+    for key, value in entries:
+        value_polarity = _polarity(value)
+        if key in {"relocation", "business_travel"} and value_polarity:
+            if answer_polarity and answer_polarity != value_polarity:
+                return False
+            if answer_polarity == value_polarity:
+                any_match = True
+                continue
+
+        value_tags = _semantic_tags(value)
+        answer_tags = _semantic_tags(answer_norm)
+        employer_tags = _semantic_tags(employer_norm)
+        if value_tags and answer_tags:
+            if not (value_tags & answer_tags):
+                return False
+            any_match = True
+            continue
+        if value_tags and employer_tags and answer_polarity:
+            question_matches = bool(value_tags & employer_tags)
+            if (answer_polarity > 0) != question_matches:
+                return False
+            any_match = True
+            continue
+
+        value_numbers = re.findall(r"\d+", value)
+        if value_numbers:
+            answer_numbers = set(re.findall(r"\d+", answer_norm))
+            employer_numbers = set(re.findall(r"\d+", employer_norm))
+            if answer_numbers & set(value_numbers):
+                any_match = True
+                continue
+            if answer_polarity > 0 and employer_numbers & set(value_numbers):
+                any_match = True
+                continue
+            return False
+
+        value_tokens = _claim_tokens(value)
+        if value_tokens:
+            answer_tokens = _claim_tokens(answer_norm)
+            if value_tokens & answer_tokens:
+                any_match = True
+                continue
+            employer_tokens = _claim_tokens(employer_norm)
+            if answer_polarity > 0 and value_tokens & employer_tokens:
+                any_match = True
+                continue
+    return any_match
+
+
 def _numeric_claims_supported(answer: str, trusted_context: str) -> bool:
     claims = re.findall(r"(?<![\w])\d+(?:[ \u00a0.,]\d+)*(?![\w])", str(answer or ""))
     trusted_digits = re.sub(r"\D", "", str(trusted_context or ""))
@@ -232,18 +363,31 @@ def evaluate_reply_decision(data: dict, *, employer_text: str, trusted_context: 
             decision.action = "review"
             decision.reason = "evidence does not support the requested fact category"
             return decision
+        if category != "experience" and not _profile_value_consistent(answer, evidence, category, employer_text):
+            decision.action = "review"
+            decision.reason = "generated answer is not consistent with the trusted profile value"
+            return decision
         if not _numeric_claims_supported(answer, trusted_context):
             decision.action = "review"
             decision.reason = "generated answer contains an unsupported numeric claim"
+            return decision
+        if category == "experience" and not _factual_claim_grounded(answer, trusted_context):
+            decision.action = "review"
+            decision.reason = "experience claim is not sufficiently grounded in trusted facts"
             return decision
     elif evidence and len(supported) != len(evidence):
         decision.action = "review"
         decision.reason = decision.reason or "claimed evidence is not present in trusted context"
         return decision
-    elif _general_answer_needs_evidence(answer) and not supported:
-        decision.action = "review"
-        decision.reason = "factual first-person claim lacks trusted evidence"
-        return decision
+    elif _general_answer_needs_evidence(answer):
+        if not supported:
+            decision.action = "review"
+            decision.reason = "factual first-person claim lacks trusted evidence"
+            return decision
+        if not _factual_claim_grounded(answer, trusted_context):
+            decision.action = "review"
+            decision.reason = "factual first-person claim is not sufficiently grounded in trusted facts"
+            return decision
 
     decision.auto_send_allowed = True
     return decision
@@ -358,15 +502,25 @@ def evaluate_questionnaire_field(data: dict, *, question: dict, trusted_context:
         if category != "experience" and not _has_relevant_evidence(evidence, category, question_text):
             decision.reason = reason or "questionnaire evidence does not support the requested fact category"
             return decision
+        if category != "experience" and not _profile_value_consistent(combined_answer, evidence, category, question_text):
+            decision.reason = "questionnaire answer is not consistent with the trusted profile value"
+            return decision
         if not _numeric_claims_supported(combined_answer, trusted_context):
             decision.reason = reason or "questionnaire answer contains an unsupported numeric claim"
+            return decision
+        if category == "experience" and not _factual_claim_grounded(combined_answer, trusted_context):
+            decision.reason = "questionnaire experience claim is not sufficiently grounded in trusted facts"
             return decision
     elif evidence and len(supported) != len(evidence):
         decision.reason = reason or "questionnaire evidence is not present in trusted context"
         return decision
-    elif _general_answer_needs_evidence(combined_answer) and not supported:
-        decision.reason = reason or "questionnaire factual claim lacks trusted evidence"
-        return decision
+    elif _general_answer_needs_evidence(combined_answer):
+        if not supported:
+            decision.reason = reason or "questionnaire factual claim lacks trusted evidence"
+            return decision
+        if not _factual_claim_grounded(combined_answer, trusted_context):
+            decision.reason = "questionnaire factual claim is not sufficiently grounded in trusted facts"
+            return decision
 
     decision.auto_fill_allowed = True
     return decision

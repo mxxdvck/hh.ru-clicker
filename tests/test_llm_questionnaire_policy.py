@@ -131,3 +131,35 @@ def test_experience_question_rejects_made_up_year_count(monkeypatch):
         resume_text="Built ERP integrations.", account_key="q",
     )
     assert batch.status == "review"
+
+
+def test_questionnaire_relocation_cannot_contradict_profile(monkeypatch):
+    payload = {"answers": [{
+        "field": "relocation", "values": ["yes"], "confidence": 0.99,
+        "category": "relocation", "evidence": ["relocation: no"],
+        "missing_facts": [], "reason": "contradiction",
+    }]}
+    _setup(monkeypatch, payload)
+    monkeypatch.setattr(CONFIG, "llm_candidate_profile", {"relocation": "no"})
+    batch = llm.generate_llm_questionnaire_decisions([
+        _q("relocation", "Are you ready to relocate?", "radio", [
+            {"value": "yes", "label": "Yes"}, {"value": "no", "label": "No"},
+        ])
+    ], account_key="q")
+    assert batch.status == "review"
+    assert batch.review_fields == ["relocation"]
+
+
+def test_questionnaire_experience_needs_grounded_claim(monkeypatch):
+    payload = {"answers": [{
+        "field": "experience", "values": ["I led ERP migrations."], "confidence": 0.99,
+        "category": "experience", "evidence": ["ERP integrations"],
+        "missing_facts": [], "reason": "overclaim",
+    }]}
+    _setup(monkeypatch, payload)
+    batch = llm.generate_llm_questionnaire_decisions(
+        [_q("experience", "Did you lead ERP migrations?")],
+        resume_text="Built ERP integrations and exchange jobs.", account_key="q",
+    )
+    assert batch.status == "review"
+    assert batch.review_fields == ["experience"]
