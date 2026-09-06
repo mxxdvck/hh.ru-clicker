@@ -1,0 +1,200 @@
+/* Project Phase 5C: Settings information architecture. */
+#settings-panel.phase5-settings-ia {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+#settings-panel.phase5-settings-ia > .settings-group-header {
+  display: none;
+}
+
+.phase5-settings-toolbar {
+  position: sticky;
+  top: 8px;
+  z-index: 40;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-card2) 94%, transparent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+}
+
+.phase5-settings-toolbar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.phase5-settings-title {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.phase5-settings-save-hint {
+  margin-top: 3px;
+  max-width: 760px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.phase5-settings-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.phase5-settings-search {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.phase5-settings-search:focus-visible,
+.phase5-settings-chip:focus-visible,
+.phase5-settings-clear:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.phase5-settings-clear {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.phase5-settings-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.phase5-settings-filter-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 2px 5px;
+  scrollbar-width: thin;
+}
+
+.phase5-settings-chip {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.phase5-settings-chip.active {
+  border-color: var(--cyan);
+  background: rgba(56, 189, 248, 0.10);
+  color: var(--cyan);
+}
+
+.phase5-settings-chip[data-group="advanced"].active {
+  border-color: var(--yellow);
+  background: rgba(250, 204, 21, 0.08);
+  color: var(--yellow);
+}
+
+.phase5-settings-results {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+#settings-panel.phase5-settings-ia > details.q-section {
+  scroll-margin-top: 170px;
+}
+
+.phase5-settings-section-tag {
+  float: right;
+  margin-left: 10px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--dim);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+[data-settings-group="advanced"] > summary .phase5-settings-section-tag {
+  border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
+  color: var(--yellow);
+}
+
+.phase5-settings-nested {
+  margin-top: 10px;
+  border-color: color-mix(in srgb, var(--border) 72%, transparent) !important;
+}
+
+.phase5-settings-empty {
+  display: none;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--dim);
+  text-align: center;
+  font-size: 12px;
+}
+
+.phase5-settings-empty.visible {
+  display: block;
+}
+
+@media (max-width: 640px) {
+  .phase5-settings-toolbar {
+    top: 4px;
+    padding: 10px;
+  }
+
+  .phase5-settings-toolbar-head,
+  .phase5-settings-search-row {
+    align-items: stretch;
+  }
+
+  .phase5-settings-toolbar-head {
+    display: block;
+  }
+
+  .phase5-settings-results {
+    display: block;
+    margin-top: 5px;
+  }
+
+  .phase5-settings-section-tag {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase5-settings-toolbar,
+  .phase5-settings-chip,
+  .phase5-settings-search {
+    scroll-behavior: auto;
+    transition: none !important;
+  }
+}
