@@ -46,6 +46,7 @@
     loadScriptOnce: loadScriptOnce
   };
 
+  ensureStylesheet('phase5-polish-css', '/static/css/phase5-polish.css');
   ensureStylesheet('phase5-settings-css', '/static/css/phase5-settings.css');
   loadScriptOnce('phase5-ui-settings-script', '/static/js/ui/settings.js');
   ensureStylesheet('phase5-overview-css', '/static/css/phase5-overview.css');
