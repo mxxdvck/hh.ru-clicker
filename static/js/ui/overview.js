@@ -123,60 +123,20 @@
     });
 
     return [
-      {
-        id: 'today',
-        label: 'Отклики сегодня',
-        value: dailyUsed,
+      { id:'today', label:'Отклики сегодня', value:dailyUsed,
         note: dailyPerAccount !== null && dailyPerAccount > 0 && accounts.length
           ? 'лимит ' + dailyPerAccount + ' на аккаунт'
-          : (accounts.length ? 'лимит не задан' : 'нет подключённых аккаунтов')
-      },
-      {
-        id: 'remaining',
-        label: 'Осталось сегодня',
-        value: !accounts.length
-          ? null
-          : (dailyPerAccount !== null && dailyPerAccount > 0 ? dailyRemaining : 'Без лимита'),
-        note: dailyEffective !== null ? 'общий доступный лимит ' + dailyEffective : ''
-      },
-      {
-        id: 'run',
-        label: 'Этот запуск',
-        value: runUsed,
-        note: !accounts.length
-          ? 'нет подключённых аккаунтов'
-          : (runEffective !== null ? 'лимит запуска ' + runEffective : 'без лимита запуска')
-      },
-      {
-        id: 'found',
-        label: 'Найдено',
-        value: number(stats.total_found),
-        note: 'счётчик текущей сессии'
-      },
-      {
-        id: 'queued',
-        label: 'В очереди',
-        value: queueKnown ? queued : null,
-        note: 'готовы к дальнейшей обработке'
-      },
-      {
-        id: 'filtered',
-        label: 'Отфильтровано',
-        value: null,
-        note: 'агрегат пока не доказуем snapshot-ом'
-      },
-      {
-        id: 'review',
-        label: 'На проверке',
-        value: reviewCount(snapshot),
-        note: 'persisted review + live fallback'
-      },
-      {
-        id: 'errors',
-        label: 'Ошибки',
-        value: number(stats.total_errors),
-        note: 'счётчик текущей сессии'
-      }
+          : (accounts.length ? 'лимит не задан' : 'нет подключённых аккаунтов') },
+      { id:'remaining', label:'Осталось сегодня',
+        value: !accounts.length ? null : (dailyPerAccount !== null && dailyPerAccount > 0 ? dailyRemaining : 'Без лимита'),
+        note: dailyEffective !== null ? 'общий доступный лимит ' + dailyEffective : '' },
+      { id:'run', label:'Этот запуск', value:runUsed,
+        note: !accounts.length ? 'нет подключённых аккаунтов' : (runEffective !== null ? 'лимит запуска ' + runEffective : 'без лимита запуска') },
+      { id:'found', label:'Найдено', value:number(stats.total_found), note:'счётчик текущей сессии' },
+      { id:'queued', label:'В очереди', value:queueKnown ? queued : null, note:'готовы к дальнейшей обработке' },
+      { id:'filtered', label:'Отфильтровано', value:null, note:'агрегат пока не доказуем snapshot-ом' },
+      { id:'review', label:'На проверке', value:reviewCount(snapshot), note:'persisted review + live fallback' },
+      { id:'errors', label:'Ошибки', value:number(stats.total_errors), note:'счётчик текущей сессии' }
     ];
   }
 
@@ -184,9 +144,33 @@
     var config = (snapshot && snapshot.config) || {};
     var accounts = accountsOf(snapshot);
     var allPaused = !!(snapshot && snapshot.paused) || (accounts.length > 0 && accounts.every(function (a) { return !!a.paused; }));
-    if (allPaused) return { kind: 'paused', text: '⏸ Все на паузе' };
-    if (config.search_only_mode === true) return { kind: 'search', text: '⌕ Только безопасный поиск' };
-    return { kind: 'active', text: '● Отклики разрешены' };
+    if (allPaused) return { kind:'paused', text:'⏸ Все на паузе' };
+    if (config.search_only_mode === true) return { kind:'search', text:'⌕ Только безопасный поиск' };
+    return { kind:'active', text:'● Отклики разрешены' };
+  }
+
+  function syncLegacyHeaderDaily(snapshot) {
+    var target = document.getElementById('hdr-daily-counter');
+    if (!target) return;
+    var accounts = accountsOf(snapshot);
+    var config = (snapshot && snapshot.config) || {};
+    var used = sumKnown(accounts, 'daily_sent');
+    var perAccount = number(config.daily_apply_limit);
+    var stopped = accounts.some(function (account) { return !!account.hard_stopped; });
+    if (used === null) return;
+
+    if (perAccount !== null && perAccount > 0 && accounts.length) {
+      if (accounts.length === 1) target.textContent = '(' + used + '/' + perAccount + ' сегодня)';
+      else target.textContent = '(' + used + '/' + (perAccount * accounts.length) + ' сегодня · ' + perAccount + '/акк.)';
+      var anyReached = accounts.some(function (account) {
+        var sent = number(account.daily_sent);
+        return sent !== null && sent >= perAccount;
+      });
+      target.style.color = anyReached ? 'var(--red)' : 'var(--yellow)';
+    } else if (used > 0) {
+      target.textContent = '(' + used + ' сегодня)';
+      target.style.color = stopped ? 'var(--red)' : 'var(--yellow)';
+    }
   }
 
   function legacyNavigate(tab) {
@@ -196,7 +180,7 @@
 
   function navigate(section, tab) {
     if (HHUI.navigation && typeof HHUI.navigation.navigate === 'function') {
-      HHUI.navigation.navigate(section, tab || null, { source: 'overview-action' });
+      HHUI.navigation.navigate(section, tab || null, { source:'overview-action' });
       return;
     }
     if (tab) legacyNavigate(tab);
@@ -205,9 +189,7 @@
   function configureSettings(group, sectionId, attempt) {
     var tries = Number(attempt) || 0;
     if (!HHUI.settings || typeof HHUI.settings.setGroup !== 'function') {
-      if (tries < 10) {
-        window.setTimeout(function () { configureSettings(group, sectionId, tries + 1); }, 25);
-      }
+      if (tries < 10) window.setTimeout(function () { configureSettings(group, sectionId, tries + 1); }, 25);
       return;
     }
     HHUI.settings.setGroup(group || 'all');
@@ -216,7 +198,7 @@
       if (target) {
         target.hidden = false;
         if ('open' in target) target.open = true;
-        target.scrollIntoView({ block: 'start' });
+        target.scrollIntoView({ block:'start' });
       }
     }
   }
@@ -228,6 +210,20 @@
     window.setTimeout(function () { configureSettings(group, sectionId, 0); }, 0);
   }
 
+  function scrollToLegacyAccount(idx) {
+    navigate('overview', 'main');
+    var mainPanel = document.getElementById('panel-main');
+    if (mainPanel && !mainPanel.classList.contains('active')) legacyNavigate('main');
+    window.setTimeout(function () {
+      var target = document.getElementById('card-' + idx);
+      if (target) target.scrollIntoView({ block:'center' });
+    }, 0);
+  }
+
+  function toggleAccountPause(idx) {
+    if (typeof window.sendCmd === 'function') window.sendCmd({ type:'account_pause', idx:idx });
+  }
+
   function attentionItems(snapshot) {
     var config = (snapshot && snapshot.config) || {};
     var accounts = accountsOf(snapshot);
@@ -235,110 +231,43 @@
     var persistedReviews = reviewCount(snapshot);
 
     if (!accounts.length) {
-      items.push({
-        key: 'no-accounts', severity: 'high', title: 'Нет подключённых аккаунтов',
-        reason: 'Без аккаунта поиск и отклики не запустятся.', action: 'Открыть вход',
-        run: function () { openSettings('connection', 'mobile-auth-section'); }
-      });
+      items.push({ key:'no-accounts', severity:'high', title:'Нет подключённых аккаунтов',
+        reason:'Без аккаунта поиск и отклики не запустятся.', action:'Открыть вход',
+        run:function () { openSettings('connection', 'mobile-auth-section'); } });
     }
-
     if (persistedReviews > 0) {
-      items.push({
-        key: 'review', severity: 'warning', title: persistedReviews + ' ответов требуют проверки',
-        reason: 'Auto safe не отправил их автоматически. Review сохраняется между перезапусками.',
-        action: 'Проверить', run: function () { navigate('communications', 'llm'); }
-      });
+      items.push({ key:'review', severity:'warning', title:persistedReviews + ' ответов требуют проверки',
+        reason:'Auto safe не отправил их автоматически. Review сохраняется между перезапусками.', action:'Проверить',
+        run:function () { navigate('communications', 'llm'); } });
     }
 
     accounts.forEach(function (account) {
       var name = account.short || account.name || ('Аккаунт #' + account.idx);
       var mode = effectiveMode(account, config);
       var oauth = account.oauth_status || {};
-      var dailyLimit = number(config.daily_apply_limit);
+      var dailyLimit = number(account.daily_limit);
+      if (dailyLimit === null) dailyLimit = number(config.daily_apply_limit);
       var dailySent = number(account.daily_sent);
       var hhLimit = number(account.hh_daily_limit) || number(config.hh_daily_limit);
       var hhUsed = number(account.hh_today_applies);
 
-      if (account.cookies_expired) {
-        items.push({
-          key: 'cookies-' + account.idx, severity: 'high', title: name + ': cookies истекли',
-          reason: 'Web-сессия HH требует обновления cookies.', action: 'Исправить',
-          run: function () { openSettings('connection'); }
-        });
-      }
-
-      if ((config.use_oauth_apply === true || mode === 'oauth') && !oauth.has_token) {
-        items.push({
-          key: 'oauth-' + account.idx, severity: 'high', title: name + ': нет OAuth-токена',
-          reason: 'Выбран режим, которому нужен OAuth для отправки откликов.', action: 'Открыть вход',
-          run: function () { openSettings('connection', 'mobile-auth-section'); }
-        });
-      }
-
-      if (account.hard_stopped) {
-        items.push({
-          key: 'hard-stop-' + account.idx, severity: 'high', title: name + ': работа остановлена',
-          reason: account.paused_reason || 'Аккаунт требует ручного вмешательства перед продолжением.',
-          action: 'К аккаунту', run: function () { scrollToLegacyAccount(account.idx); }
-        });
-      } else if (account.paused) {
-        items.push({
-          key: 'paused-' + account.idx, severity: 'warning', title: name + ': на паузе',
-          reason: account.paused_reason || 'Аккаунт временно не обрабатывает вакансии.',
-          action: 'К аккаунту', run: function () { scrollToLegacyAccount(account.idx); }
-        });
-      }
-
-      if (account.limit_exceeded || (dailyLimit && dailySent !== null && dailySent >= dailyLimit)) {
-        items.push({
-          key: 'daily-limit-' + account.idx, severity: 'warning', title: name + ': дневной лимит исчерпан',
-          reason: dailySent !== null && dailyLimit ? dailySent + ' из ' + dailyLimit + ' откликов.' : 'Лимит отмечен backend-ом.',
-          action: 'Лимиты', run: function () { openSettings('search'); }
-        });
-      }
-
-      if (hhLimit && hhUsed !== null && hhUsed >= hhLimit) {
-        items.push({
-          key: 'hh-limit-' + account.idx, severity: 'warning', title: name + ': достигнут лимит HH',
-          reason: hhUsed + ' из ' + hhLimit + ' по счётчику HH.', action: 'HH статус',
-          run: function () { navigate('applications', 'hh'); }
-        });
-      }
-
-      if (number(account.hh_unread_by_employer) > 0) {
-        items.push({
-          key: 'unread-' + account.idx, severity: 'info', title: name + ': новые сообщения работодателей',
-          reason: account.hh_unread_by_employer + ' чатов ждут внимания.', action: 'Открыть AI',
-          run: function () { navigate('communications', 'llm'); }
-        });
-      }
-
+      if (account.cookies_expired) items.push({ key:'cookies-' + account.idx, severity:'high', title:name + ': cookies истекли', reason:'Web-сессия HH требует обновления cookies.', action:'Исправить', run:function () { openSettings('connection'); } });
+      if ((config.use_oauth_apply === true || mode === 'oauth') && !oauth.has_token) items.push({ key:'oauth-' + account.idx, severity:'high', title:name + ': нет OAuth-токена', reason:'Выбран режим, которому нужен OAuth для отправки откликов.', action:'Открыть вход', run:function () { openSettings('connection', 'mobile-auth-section'); } });
+      if (account.hard_stopped) items.push({ key:'hard-stop-' + account.idx, severity:'high', title:name + ': работа остановлена', reason:account.paused_reason || 'Аккаунт требует ручного вмешательства перед продолжением.', action:'К аккаунту', run:function () { scrollToLegacyAccount(account.idx); } });
+      else if (account.paused) items.push({ key:'paused-' + account.idx, severity:account.paused_reason === 'auto_errors' ? 'high' : 'warning', title:name + ': на паузе', reason:account.paused_reason || 'Аккаунт временно не обрабатывает вакансии.', action:'К аккаунту', run:function () { scrollToLegacyAccount(account.idx); } });
+      if (account.limit_exceeded || (dailyLimit && dailySent !== null && dailySent >= dailyLimit)) items.push({ key:'daily-limit-' + account.idx, severity:'warning', title:name + ': дневной лимит исчерпан', reason:dailySent !== null && dailyLimit ? dailySent + ' из ' + dailyLimit + ' откликов.' : 'Лимит отмечен backend-ом.', action:'Лимиты', run:function () { openSettings('search'); } });
+      if (hhLimit && hhUsed !== null && hhUsed >= hhLimit) items.push({ key:'hh-limit-' + account.idx, severity:'warning', title:name + ': достигнут лимит HH', reason:hhUsed + ' из ' + hhLimit + ' по счётчику HH.', action:'HH статус', run:function () { navigate('applications', 'hh'); } });
+      if (number(account.hh_unread_by_employer) > 0) items.push({ key:'unread-' + account.idx, severity:'info', title:name + ': новые сообщения работодателей', reason:account.hh_unread_by_employer + ' чатов ждут внимания.', action:'Открыть AI', run:function () { navigate('communications', 'llm'); } });
       if (number(account.resume_invitations_new) > 0 || number(account.resume_new_invitations_total) > 0) {
         var invitations = Math.max(number(account.resume_invitations_new) || 0, number(account.resume_new_invitations_total) || 0);
-        items.push({
-          key: 'invite-' + account.idx, severity: 'info', title: name + ': новые приглашения',
-          reason: invitations + ' новых приглашений по резюме.', action: 'HH статус',
-          run: function () { navigate('applications', 'hh'); }
-        });
+        items.push({ key:'invite-' + account.idx, severity:'info', title:name + ': новые приглашения', reason:invitations + ' новых приглашений по резюме.', action:'HH статус', run:function () { navigate('applications', 'hh'); } });
       }
     });
 
-    var weight = { high: 0, warning: 1, info: 2 };
-    function rank(severity) {
-      return Object.prototype.hasOwnProperty.call(weight, severity) ? weight[severity] : 9;
-    }
+    var weight = { high:0, warning:1, info:2 };
+    function rank(severity) { return Object.prototype.hasOwnProperty.call(weight, severity) ? weight[severity] : 9; }
     items.sort(function (a, b) { return rank(a.severity) - rank(b.severity); });
     return items;
-  }
-
-  function scrollToLegacyAccount(idx) {
-    navigate('overview', 'main');
-    var mainPanel = document.getElementById('panel-main');
-    if (mainPanel && !mainPanel.classList.contains('active')) legacyNavigate('main');
-    window.setTimeout(function () {
-      var target = document.getElementById('card-' + idx);
-      if (target) target.scrollIntoView({ block: 'center' });
-    }, 0);
   }
 
   function buildRoot() {
@@ -346,7 +275,6 @@
     if (!panel) return null;
     var existing = document.getElementById('phase5-overview');
     if (existing) return existing;
-
     var root = el('section', 'phase5-overview');
     root.id = 'phase5-overview';
     root.setAttribute('data-testid', 'phase5-overview');
@@ -367,11 +295,8 @@
       if (item.value === null || item.value === undefined) {
         value.textContent = 'нет данных';
         value.classList.add('phase5-unknown');
-      } else if (typeof item.value === 'number') {
-        value.textContent = fmt(item.value);
-      } else {
-        value.textContent = String(item.value);
-      }
+      } else if (typeof item.value === 'number') value.textContent = fmt(item.value);
+      else value.textContent = String(item.value);
       card.appendChild(value);
       card.appendChild(el('div', 'phase5-kpi-note', item.note || ''));
       grid.appendChild(card);
@@ -387,7 +312,6 @@
     var items = attentionItems(snapshot);
     head.appendChild(el('span', 'phase5-overview-count', items.length));
     card.appendChild(head);
-
     var list = el('div', 'phase5-attention-list');
     if (!items.length) {
       var empty = el('div', 'phase5-overview-empty', 'Сейчас нет подтверждённых проблем, требующих ручного действия. Новые review, лимиты и проблемы с авторизацией появятся здесь автоматически.');
@@ -415,9 +339,16 @@
   }
 
   function healthState(account) {
-    if (account.hard_stopped || account.cookies_expired) return { state: 'error', text: '● Нужна помощь' };
-    if (account.paused || number(account.consecutive_errors) > 0) return { state: 'warning', text: '● Внимание' };
-    return { state: 'ok', text: '● В норме' };
+    if (account.hard_stopped || account.cookies_expired) return { state:'error', text:'● Нужна помощь' };
+    if (account.paused || number(account.consecutive_errors) > 0) return { state:'warning', text:'● Внимание' };
+    return { state:'ok', text:'● В норме' };
+  }
+
+  function detailLine(label, value) {
+    var row = el('div');
+    row.appendChild(el('strong', '', label + ': '));
+    row.appendChild(document.createTextNode(String(value || '—')));
+    return row;
   }
 
   function renderHealth(container, snapshot) {
@@ -429,17 +360,13 @@
     head.appendChild(el('div', 'phase5-overview-card-title', 'Аккаунты'));
     head.appendChild(el('span', 'phase5-overview-count', accounts.length));
     card.appendChild(head);
-
     var list = el('div', 'phase5-health-list');
-    if (!accounts.length) {
-      list.appendChild(el('div', 'phase5-overview-empty', 'Аккаунтов пока нет. Добавьте или авторизуйте аккаунт в настройках подключения.'));
-    }
+    if (!accounts.length) list.appendChild(el('div', 'phase5-overview-empty', 'Аккаунтов пока нет. Добавьте или авторизуйте аккаунт в настройках подключения.'));
 
     accounts.forEach(function (account) {
       var row = el('div', 'phase5-health-card');
       row.setAttribute('data-account-idx', account.idx);
       row.setAttribute('data-testid', 'phase5-health-account-' + account.idx);
-
       var main = el('div', 'phase5-health-main');
       main.appendChild(el('div', 'phase5-health-name', account.name || account.short || ('Аккаунт #' + account.idx)));
       var hs = healthState(account);
@@ -451,16 +378,18 @@
       var mode = effectiveMode(account, config);
       var oauth = account.oauth_status || {};
       var dailySent = number(account.daily_sent);
-      var dailyLimit = number(config.daily_apply_limit);
+      var dailyLimit = number(account.daily_limit);
+      if (dailyLimit === null) dailyLimit = number(config.daily_apply_limit);
       var remaining = dailyLimit && dailySent !== null ? Math.max(0, dailyLimit - dailySent) : null;
       var wsState = account.ws_status || (config.use_websocket_realtime ? 'включён глобально' : 'выкл');
+      var phase = account.paused ? 'paused' : (account.status || 'неизвестно');
       var meta = el('div', 'phase5-health-meta');
       [
-        ['Режим', mode],
+        ['Фаза', phase], ['Режим', mode],
         ['Сегодня', dailySent === null ? 'нет данных' : dailySent + (dailyLimit ? ' / ' + dailyLimit : '')],
         ['Осталось', remaining === null ? (dailyLimit ? 'нет данных' : 'без лимита') : remaining],
-        ['OAuth', oauth.has_token ? 'есть' : 'нет'],
-        ['WS', wsState],
+        ['OAuth', oauth.has_token ? 'есть' : 'нет'], ['WS', wsState],
+        ['LLM', account.llm_enabled ? 'вкл' : 'выкл'],
         ['Ошибки подряд', number(account.consecutive_errors) === null ? 'нет данных' : account.consecutive_errors]
       ].forEach(function (pair) {
         var span = el('span');
@@ -470,14 +399,35 @@
       });
       row.appendChild(meta);
 
-      var action = el('button', 'phase5-action-btn', 'Открыть управление');
-      action.type = 'button';
-      action.style.marginTop = '8px';
-      action.addEventListener('click', function () { scrollToLegacyAccount(account.idx); });
-      row.appendChild(action);
+      var actions = el('div', 'phase5-health-actions');
+      var canTogglePause = !account.hard_stopped && !(account.temp && account.bot_active === false);
+      if (canTogglePause) {
+        var toggle = el('button', 'phase5-action-btn ' + (account.paused ? 'primary' : 'pause'), account.paused ? '▶ Продолжить' : '⏸ Пауза');
+        toggle.type = 'button';
+        toggle.setAttribute('data-testid', 'phase5-health-toggle-' + account.idx);
+        toggle.addEventListener('click', function () { toggleAccountPause(account.idx); });
+        actions.appendChild(toggle);
+      }
+      var manage = el('button', 'phase5-action-btn', account.hard_stopped ? 'Открыть проблему' : 'Открыть управление');
+      manage.type = 'button';
+      manage.addEventListener('click', function () { scrollToLegacyAccount(account.idx); });
+      actions.appendChild(manage);
+      row.appendChild(actions);
+
+      var details = el('details', 'phase5-health-details');
+      details.appendChild(el('summary', '', 'Подробнее'));
+      var detailGrid = el('div', 'phase5-health-detail-grid');
+      var vacancy = [account.current_vacancy_title, account.current_vacancy_company].filter(Boolean).join(' · ');
+      if (!vacancy && number(account.current_vacancy_idx) !== null && number(account.total_vacancies) !== null && account.total_vacancies > 0) vacancy = account.current_vacancy_idx + ' / ' + account.total_vacancies;
+      detailGrid.appendChild(detailLine('Текущая вакансия', vacancy || 'нет активной'));
+      detailGrid.appendChild(detailLine('Статус', account.status_detail || account.status || '—'));
+      detailGrid.appendChild(detailLine('Следующий подъём резюме', account.next_resume_touch || account.resume_touch_status || '—'));
+      detailGrid.appendChild(detailLine('LLM очередь', number(account.llm_pending_chats) === null ? 'нет данных' : account.llm_pending_chats));
+      detailGrid.appendChild(detailLine('Cookies', account.cookies_expired ? 'истекли' : 'активны'));
+      details.appendChild(detailGrid);
+      row.appendChild(details);
       list.appendChild(row);
     });
-
     card.appendChild(list);
     container.appendChild(card);
   }
@@ -485,10 +435,10 @@
   function render(snapshot) {
     if (!snapshot) return;
     lastSnapshot = snapshot;
+    syncLegacyHeaderDaily(snapshot);
     var root = buildRoot();
     if (!root) return;
     root.replaceChildren();
-
     var top = el('div', 'phase5-overview-top');
     var copy = el('div');
     copy.appendChild(el('h2', 'phase5-overview-title', 'Операционный обзор'));
@@ -500,9 +450,7 @@
     badge.setAttribute('data-testid', 'phase5-overview-mode');
     top.appendChild(badge);
     root.appendChild(top);
-
     renderKpis(root, snapshot);
-
     var columns = el('div', 'phase5-overview-columns');
     renderAttention(columns, snapshot);
     renderHealth(columns, snapshot);
@@ -522,9 +470,7 @@
     scheduleRender(currentSnapshot());
     fetchReviewSummary(false);
     if (HHUI.core && typeof HHUI.core.on === 'function') {
-      HHUI.core.on('hh:snapshot', function (event) {
-        scheduleRender(event && event.detail && event.detail.snapshot ? event.detail.snapshot : currentSnapshot());
-      });
+      HHUI.core.on('hh:snapshot', function (event) { scheduleRender(event && event.detail && event.detail.snapshot ? event.detail.snapshot : currentSnapshot()); });
       HHUI.core.on('hh:tabchange', function (event) {
         var detail = event && event.detail;
         if (detail && detail.section === 'overview') fetchReviewSummary(false);
@@ -533,14 +479,11 @@
   }
 
   HHUI.overview = {
-    render: scheduleRender,
-    refreshReview: function () { return fetchReviewSummary(true); },
-    getReviewSummary: function () { return reviewSummary; }
+    render:scheduleRender,
+    refreshReview:function () { return fetchReviewSummary(true); },
+    getReviewSummary:function () { return reviewSummary; }
   };
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once:true });
+  else init();
 })();
