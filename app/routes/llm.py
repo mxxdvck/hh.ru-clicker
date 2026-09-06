@@ -24,7 +24,7 @@ router = APIRouter()
 def _llm_proxies():
     """proxies-dict для requests к LLM-провайдеру, если задан env LLM_PROXY.
 
-    Держим тест-коннект и реальные вызовы (см. app.llm._make_openai_client) на
+    Держим тест-коннект и реальные вызовы (см. app.llm_provider._openai_client) на
     одном прокси — иначе проверка ключа падает с РФ-IP, хотя сам чат работает.
     """
     proxy = os.environ.get("LLM_PROXY", "").strip()
