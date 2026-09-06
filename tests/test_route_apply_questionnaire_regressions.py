@@ -83,7 +83,9 @@ def test_manual_parser_keeps_radio_labels_checkbox_and_select(monkeypatch):
 
     radio, checkbox, select = result["questions"]
     assert [item["label"] for item in radio["options"]] == ["1-3 years", "3-6 years"]
-    assert checkbox["suggested"] == ["django"]
+    assert radio["suggested"] == ""
+    assert checkbox["suggested"] == []
+    assert select["suggested"] == ""
     assert select["options"][1] == {"value": "office", "label": "Office"}
 
 

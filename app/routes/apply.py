@@ -15,7 +15,7 @@ from app.apply_mode import search_only_blocked
 from app.hh_api import get_headers
 from app.hh_client_factory import get_client
 from app.hh_client_fallback import FallbackHHClient
-from app.questionnaire import get_questionnaire_answer, _parse_questionnaire_rich
+from app.questionnaire import _parse_questionnaire_rich, suggest_questionnaire_value
 from app.instances import bot
 from app.user_agent import webview_user_agent
 from app.hh_apply import _aio_egress_kwargs
@@ -51,31 +51,8 @@ async def _fetch_questionnaire_data(acc: dict, vid: str) -> dict:
     # parser had drifted: radio labels were looked up by value instead of id,
     # and select fields were silently omitted.
     questions = _parse_questionnaire_rich(html)
-    negative_words = ("нет", "no", "не готов", "не готова", "не могу")
     for question in questions:
-        answer = get_questionnaire_answer(question.get("text", ""))
-        options = question.get("options") or []
-        qtype = question.get("type")
-        if qtype == "textarea":
-            question["suggested"] = answer
-        elif qtype == "radio":
-            values = [option["value"] for option in options]
-            chosen = values[0] if values else ""
-            if any(word in answer.lower() for word in negative_words) and len(values) > 1:
-                chosen = values[1]
-            question["suggested"] = chosen
-        elif qtype == "checkbox":
-            # A checkbox group is multi-valued all the way through the UI and
-            # multipart encoder.  Default conservatively to its first option.
-            question["suggested"] = [options[0]["value"]] if options else []
-        elif qtype == "select":
-            chosen = options[0]["value"] if options else ""
-            answer_lower = answer.lower()
-            for option in options:
-                if option.get("label", "").lower() in answer_lower:
-                    chosen = option["value"]
-                    break
-            question["suggested"] = chosen
+        question["suggested"] = suggest_questionnaire_value(question)
 
     return {"questions": questions, "hidden": hidden, "url_form": url_form}
 

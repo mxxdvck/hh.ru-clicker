@@ -271,3 +271,111 @@ def test_questionnaire_policy_review_never_posts_form(hh_no_proxy, monkeypatch):
     assert result == "test"
     assert info["error_type"] == "questionnaire_review_required"
     assert [method for method, _url, _kw in rec.calls] == ["GET"]
+
+
+_SELECTION_HTML = {
+    "radio": (
+        '<div data-qa="task-question">Relocation?</div>'
+        '<input type="radio" name="task_1" value="yes" id="r_yes">'
+        '<label for="r_yes">Yes</label>'
+        '<input type="radio" name="task_1" value="no" id="r_no">'
+        '<label for="r_no">No</label>'
+    ),
+    "checkbox": (
+        '<div data-qa="task-question">Frameworks?</div>'
+        '<input type="checkbox" name="task_1" value="django">'
+        '<input type="checkbox" name="task_1" value="fastapi">'
+    ),
+    "select": (
+        '<div data-qa="task-question">Work format?</div>'
+        '<select name="task_1">'
+        '<option value="remote">Remote</option>'
+        '<option value="office">Office</option>'
+        '</select>'
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", ["radio", "checkbox", "select"])
+def test_unresolved_selection_questionnaire_never_posts(kind, hh_no_proxy, monkeypatch):
+    from app.config import CONFIG
+
+    rec = _install_recorder(monkeypatch, get_resp=_RecResp(200, _SELECTION_HTML[kind]))
+    monkeypatch.setattr(hh_apply, "search_only_blocked", lambda: False)
+    monkeypatch.setattr(CONFIG, "llm_fill_questionnaire", False)
+    monkeypatch.setattr(CONFIG, "llm_enabled", False)
+    monkeypatch.setattr(CONFIG, "questionnaire_templates", [])
+
+    result, info = _run_coro(
+        hh_apply.fill_and_submit_questionnaire(_make_acc(), "777", "Dev", "Comp")
+    )
+
+    assert result == "test"
+    assert info["error_type"] == "questionnaire_review_required"
+    assert info["review_fields"] == ["task_1"]
+    assert [method for method, _url, _kw in rec.calls] == ["GET"]
+
+
+def test_explicit_template_can_resolve_selection(monkeypatch):
+    from app.config import CONFIG
+    from app.questionnaire import _parse_questionnaire_fields
+
+    monkeypatch.setattr(
+        CONFIG,
+        "questionnaire_templates",
+        [{"keywords": ["relocation"], "answer": "No"}],
+    )
+    _questions, answers = _parse_questionnaire_fields(_SELECTION_HTML["radio"])
+    assert answers == {"task_1": "no"}
+
+
+def test_ambiguous_template_does_not_guess_selection(monkeypatch):
+    from app.config import CONFIG
+    from app.questionnaire import suggest_questionnaire_value
+
+    monkeypatch.setattr(
+        CONFIG,
+        "questionnaire_templates",
+        [{"keywords": ["format"], "answer": "remote"}],
+    )
+    question = {
+        "field": "task_1",
+        "type": "select",
+        "text": "Work format?",
+        "options": [
+            {"value": "r1", "label": "Remote only"},
+            {"value": "r2", "label": "Remote flexible"},
+        ],
+    }
+    assert suggest_questionnaire_value(question) == ""
+
+
+def test_llm_can_fill_selection_that_template_left_unresolved(hh_no_proxy, monkeypatch):
+    from app.config import CONFIG
+    from app.llm_policy import QuestionnaireBatch
+
+    rec = _install_recorder(
+        monkeypatch,
+        get_resp=_RecResp(200, _SELECTION_HTML["radio"]),
+        post_resp=_RecResp(302, ""),
+    )
+    monkeypatch.setattr(hh_apply, "search_only_blocked", lambda: False)
+    monkeypatch.setattr(CONFIG, "questionnaire_templates", [])
+    monkeypatch.setattr(CONFIG, "llm_fill_questionnaire", True)
+    monkeypatch.setattr(CONFIG, "llm_enabled", True)
+    monkeypatch.setattr(CONFIG, "llm_use_resume", False)
+    monkeypatch.setattr(
+        hh_apply,
+        "generate_llm_questionnaire_decisions",
+        lambda *args, **kwargs: QuestionnaireBatch(
+            status="ok", answers={"task_1": "yes"}, review_fields=[]
+        ),
+    )
+
+    result, info = _run_coro(
+        hh_apply.fill_and_submit_questionnaire(_make_acc(), "777", "Dev", "Comp")
+    )
+
+    assert result == "sent"
+    assert info == {}
+    assert [method for method, _url, _kw in rec.calls] == ["GET", "POST"]

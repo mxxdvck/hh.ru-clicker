@@ -362,14 +362,18 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
 
             # Парсим все поля опроса
             questions, field_answers = _parse_questionnaire_fields(html)
+            rich_qs = _parse_questionnaire_rich(html)
+            expected_fields = [
+                str(q.get("field") or "").strip()
+                for q in rich_qs
+                if str(q.get("field") or "").strip()
+            ]
 
-            if not field_answers:
+            if not expected_fields:
                 log_debug(f"Questionnaire: no task fields found for {vid}")
                 return "test", {}
 
-            # LLM-заполнение опросника (если включено)
             if CONFIG.llm_fill_questionnaire and CONFIG.llm_enabled and questions:
-                rich_qs = _parse_questionnaire_rich(html)
                 resume_text = ""
                 if CONFIG.llm_use_resume:
                     # fetch_resume_text — sync requests.get с 15s timeout.
@@ -443,10 +447,12 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                                 validated_ans[field] = fuzzy[0]
                             else:
                                 log_debug(f"LLM answer '{s}' not in options {valid_values}, skipping field {field}")
-                    overridden = [f for f in validated_ans if f in field_answers]
-                    for f in overridden:
+                    accepted = [f for f in validated_ans if f in rich_fields]
+                    for f in accepted:
                         field_answers[f] = validated_ans[f]
-                    log_debug(f"Questionnaire {vid}: LLM заполнил {len(overridden)}/{len(field_answers)} полей: {overridden}")
+                    log_debug(
+                        f"Questionnaire {vid}: LLM safely resolved {len(accepted)}/{len(expected_fields)} fields: {accepted}"
+                    )
                 else:
                     llm_status = get_llm_last_status(f"questionnaire:{vid}", "questionnaire")
                     provider = llm_status.get("provider") or "unknown"
@@ -458,6 +464,23 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                             f"Questionnaire {vid}: LLM не дал валидный ответ "
                             f"(provider={provider}, status={status}), используем шаблоны"
                         )
+
+            def _resolved_questionnaire_value(value) -> bool:
+                if isinstance(value, list):
+                    return bool(value) and all(str(item).strip() for item in value)
+                return bool(str(value or "").strip())
+
+            unresolved_fields = [
+                field for field in expected_fields
+                if field not in field_answers or not _resolved_questionnaire_value(field_answers.get(field))
+            ]
+            if unresolved_fields:
+                log_debug(f"Questionnaire {vid}: refusing auto-submit; unresolved fields={unresolved_fields}")
+                return "test", {
+                    "error_type": "questionnaire_review_required",
+                    "review_fields": unresolved_fields,
+                    "review_reason": "one or more questionnaire fields are unresolved",
+                }
 
             log_debug(f"Questionnaire {vid}: {len(field_answers)} fields, {len(questions)} questions")
             for name, val in field_answers.items():
