@@ -52,4 +52,6 @@
   loadScriptOnce('phase5-ui-overview-script', '/static/js/ui/overview.js');
   ensureStylesheet('phase5-vacancies-css', '/static/css/phase5-vacancies.css');
   loadScriptOnce('phase5-ui-vacancies-script', '/static/js/ui/vacancies.js');
+  ensureStylesheet('phase5-applications-css', '/static/css/phase5-applications.css');
+  loadScriptOnce('phase5-ui-applications-script', '/static/js/ui/applications.js');
 })();

@@ -645,3 +645,25 @@ def test_apply_search_results_rejects_unknown_subset_without_unpausing(monkeypat
     assert state._apply_search_results_ids is None
     assert state.paused is True
     assert state.paused_reason == "search_only"
+
+
+def test_application_ledger_status_counts(monkeypatch):
+    _enable_test_sends(monkeypatch)
+
+    ok, *_ = ledger.reserve_application("ops", "1", "r", "test", "run")
+    assert ok
+    ledger.mark_application("ops", "1", "r", status="applied")
+
+    ok, *_ = ledger.reserve_application("ops", "2", "r", "test", "run")
+    assert ok
+    ledger.mark_application("ops", "2", "r", status="failed_permanent")
+
+    ok, *_ = ledger.reserve_application("ops", "3", "r", "test", "run")
+    assert ok
+
+    assert ledger.get_status_counts("ops") == {
+        "applied": 1,
+        "applying": 1,
+        "failed_permanent": 1,
+    }
+    assert ledger.get_status_counts("another") == {}

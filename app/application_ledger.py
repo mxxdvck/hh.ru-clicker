@@ -286,6 +286,20 @@ def count_current_run(account_name: str, run_id: str = "") -> int:
         conn.close()
 
 
+def get_status_counts(account_name: str) -> dict[str, int]:
+    """Return durable per-status application counts for one account."""
+    conn = _connect()
+    try:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM applications WHERE account_name=? GROUP BY status",
+            (str(account_name or ""),),
+        ).fetchall()
+        return {str(row["status"]): int(row["n"] or 0) for row in rows}
+    finally:
+        conn.close()
+
+
 def list_interrupted(account_name: str, limit: int = 200) -> list[dict]:
     """Return unresolved previous-run sends for safe startup reconciliation."""
     conn = _connect()
