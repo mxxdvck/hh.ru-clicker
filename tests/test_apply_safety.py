@@ -593,7 +593,55 @@ def test_apply_search_results_resumes_exact_existing_queue(monkeypatch):
     assert state.vacancies_queue == ["101", "102"]
     assert state.total_vacancies == 2
     assert state._apply_search_results_requested is True
+    assert state._apply_search_results_ids is None
     assert state.paused is False
     assert state.paused_reason == ""
     assert state.status == "applying"
     assert resumed == [0]
+
+def test_apply_search_results_accepts_only_existing_subset(monkeypatch):
+    import app.manager as manager_mod
+    from app.state import AccountState
+
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    state = AccountState({"name": "acc", "short": "a", "color": "#fff", "urls": []})
+    state.vacancies_queue = ["101", "102", "103"]
+    state.total_vacancies = 3
+    state.paused = True
+    state.paused_reason = "search_only"
+    state.status = "search_only"
+    mgr = manager_mod.BotManager.__new__(manager_mod.BotManager)
+    mgr.account_states = [state]
+    mgr.temp_states = {}
+    mgr._add_log = lambda *args, **kwargs: None
+    monkeypatch.setattr("app.ws_manager.ws_manager.resume_account", lambda idx: None)
+
+    assert mgr.apply_search_results(0, vacancy_ids=["103", "101", "103"]) is True
+    assert state.vacancies_queue == ["101", "103"]
+    assert state.total_vacancies == 2
+    assert state._apply_search_results_ids == ["103", "101"]
+    assert state._apply_search_results_requested is True
+
+
+def test_apply_search_results_rejects_unknown_subset_without_unpausing(monkeypatch):
+    import app.manager as manager_mod
+    from app.state import AccountState
+
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    state = AccountState({"name": "acc", "short": "a", "color": "#fff", "urls": []})
+    state.vacancies_queue = ["101", "102"]
+    state.total_vacancies = 2
+    state.paused = True
+    state.paused_reason = "search_only"
+    state.status = "search_only"
+    mgr = manager_mod.BotManager.__new__(manager_mod.BotManager)
+    mgr.account_states = [state]
+    mgr.temp_states = {}
+    mgr._add_log = lambda *args, **kwargs: None
+
+    assert mgr.apply_search_results(0, vacancy_ids=["101", "999"]) is False
+    assert state.vacancies_queue == ["101", "102"]
+    assert state._apply_search_results_requested is False
+    assert state._apply_search_results_ids is None
+    assert state.paused is True
+    assert state.paused_reason == "search_only"

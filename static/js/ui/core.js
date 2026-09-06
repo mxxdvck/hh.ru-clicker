@@ -50,4 +50,6 @@
   loadScriptOnce('phase5-ui-settings-script', '/static/js/ui/settings.js');
   ensureStylesheet('phase5-overview-css', '/static/css/phase5-overview.css');
   loadScriptOnce('phase5-ui-overview-script', '/static/js/ui/overview.js');
+  ensureStylesheet('phase5-vacancies-css', '/static/css/phase5-vacancies.css');
+  loadScriptOnce('phase5-ui-vacancies-script', '/static/js/ui/vacancies.js');
 })();
