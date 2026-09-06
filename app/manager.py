@@ -221,6 +221,7 @@ from app.llm import (generate_llm_reply, generate_llm_cover_letter, _openclaw_co
 
 from app.hh_client_factory import get_client
 from app.apply_safety import reserve_apply, finalize_apply
+from app.apply_mode import search_only_blocked, set_approved_search_apply
 from app.application_ledger import (
     mark_interrupted_startup, mark_run_interrupted, mark_application, list_interrupted,
     count_applied_today,
@@ -907,6 +908,41 @@ class BotManager:
                     ws_manager.resume_account(idx)
             except Exception:
                 pass
+
+    def apply_search_results(self, idx: int) -> bool:
+        """Apply exactly the current search-only shortlist without searching again."""
+        state = None
+        if 0 <= idx < len(self.account_states):
+            state = self.account_states[idx]
+        else:
+            temp_idx = idx - len(self.account_states)
+            state = self.temp_states.get(temp_idx)
+        if not state:
+            return False
+        with state._state_lock:
+            queue = list(getattr(state, "vacancies_queue", []) or [])
+            if not CONFIG.search_only_mode or not queue:
+                return False
+            if not state.paused or state.paused_reason != "search_only":
+                return False
+            state._apply_search_results_requested = True
+            state.current_vacancy_idx = 0
+            state.paused = False
+            state.paused_reason = ""
+            state.status = "applying"
+            state.status_detail = f"Подтверждён список из {len(queue)} вакансий; повторный поиск не запускается"
+        if 0 <= idx < len(self.account_states):
+            try:
+                from app.ws_manager import ws_manager
+                ws_manager.resume_account(idx)
+            except Exception:
+                pass
+        self._add_log(
+            state.short, state.color,
+            f"✅ Пользователь подтвердил текущие {len(queue)} вакансий для отклика без нового поиска",
+            "success",
+        )
+        return True
 
     def toggle_account_llm(self, idx: int):
         state = None
@@ -1738,6 +1774,10 @@ class BotManager:
                 log_debug(f"active_search [{state.short}] exception: {e}")
 
         while not self._stop_event.is_set() and not state._deleted:
+            # Never leak a one-shot search approval into a later collection cycle.
+            set_approved_search_apply(False)
+            approved_search_batch = False
+            approved_start_sent = int(getattr(state, "sent", 0) or 0)
             # Global + per-account pause
             while (self.paused or state.paused) and not self._stop_event.is_set() and not state._deleted:
                 # Auto-reset daily limit pause when new day starts
@@ -2046,7 +2086,7 @@ class BotManager:
             )
 
             if not unique_vacancies:
-                if CONFIG.search_only_mode:
+                if search_only_blocked():
                     state.status = "search_only"
                     state.status_detail = "Только поиск: подходящих вакансий 0"
                     state.paused = True
@@ -2313,7 +2353,7 @@ class BotManager:
             )
 
             if not filtered:
-                if CONFIG.search_only_mode:
+                if search_only_blocked():
                     state.status = "search_only"
                     state.status_detail = "Только поиск: после фильтров подходящих вакансий 0"
                     state.paused = True
@@ -2381,15 +2421,34 @@ class BotManager:
                 "color": state.color,
             }
 
-            # Search-only: очередь и метаданные готовы, но apply-фаза запрещена.
-            if CONFIG.search_only_mode:
+            # Search-only keeps the exact shortlist in this worker frame. The
+            # user may explicitly approve this list, in which case only this worker
+            # context bypasses the search-only send guard. No new search is run.
+            if search_only_blocked():
                 state.status = "search_only"
                 state.status_detail = f"Только поиск: найдено {len(filtered)} подходящих вакансий; проверка завершена"
                 state.paused = True
                 state.paused_reason = "search_only"
                 self._add_log(state.short, state.color,
                               f"🔎 Только поиск завершён: {len(filtered)} вакансий в очереди; аккаунт поставлен на паузу", "info")
-                continue
+                while (self.paused or state.paused) and not self._stop_event.is_set() and not state._deleted:
+                    if self._stop_event.wait(0.25):
+                        return
+                if self._stop_event.is_set() or state._deleted:
+                    return
+                if getattr(state, "_apply_search_results_requested", False):
+                    with state._state_lock:
+                        state._apply_search_results_requested = False
+                    approved_search_batch = True
+                    approved_start_sent = int(getattr(state, "sent", 0) or 0)
+                    set_approved_search_apply(True)
+                    state.status = "applying"
+                    state.status_detail = f"Отклик по найденному списку: 0/{len(filtered)}"
+                    self._add_log(state.short, state.color,
+                                  f"✅ Запуск откликов по сохранённому списку из {len(filtered)} вакансий без нового поиска",
+                                  "success")
+                else:
+                    continue
 
             # === ОТПРАВКА ОТКЛИКОВ (ПАКЕТАМИ) ===
             # Read-only sync with HH immediately before live sends. This catches
@@ -2419,7 +2478,7 @@ class BotManager:
                     break
                 # Runtime guard: если режим включили после формирования очереди,
                 # следующий ещё не отправленный батч блокируется.
-                if CONFIG.search_only_mode:
+                if search_only_blocked():
                     state.status = "search_only"
                     state.status_detail = f"Только поиск: {len(filtered)} вакансий в очереди, отклики отключены"
                     self._add_log(state.short, state.color, "🔎 Только поиск включён: apply-фаза остановлена", "info")
@@ -2561,7 +2620,7 @@ class BotManager:
                     )
 
                 # Последний safety-check непосредственно перед сетевой отправкой.
-                if CONFIG.search_only_mode:
+                if search_only_blocked():
                     state.status = "search_only"
                     state.status_detail = f"Только поиск: {len(filtered)} вакансий в очереди, отклики отключены"
                     self._add_log(state.short, state.color, "🔎 Только поиск: отправка батча заблокирована", "info")
@@ -2909,6 +2968,28 @@ class BotManager:
                 i += batch_size
                 if i < len(filtered):
                     time.sleep(CONFIG.response_delay)
+
+            if approved_search_batch:
+                set_approved_search_apply(False)
+                finished_approved_queue = (
+                    i >= len(filtered) and not state.limit_exceeded and not state.hard_stopped
+                    and not state.cookies_expired and not state.paused
+                )
+                if finished_approved_queue:
+                    sent_now = max(0, int(getattr(state, "sent", 0) or 0) - approved_start_sent)
+                    state.vacancies_queue = []
+                    state.total_vacancies = 0
+                    state.current_vacancy_idx = 0
+                    state.paused = True
+                    state.paused_reason = "search_only"
+                    state.status = "search_only"
+                    state.status_detail = f"Список обработан: отправлено {sent_now}; безопасный поиск остаётся включён"
+                    self._add_log(
+                        state.short, state.color,
+                        f"✅ Сохранённый список обработан без нового поиска: отправлено {sent_now}; аккаунт снова на паузе",
+                        "success",
+                    )
+                    continue
 
             # Очистка
             state.current_vacancy_title = ""

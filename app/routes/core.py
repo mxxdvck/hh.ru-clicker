@@ -131,6 +131,12 @@ async def websocket_endpoint(ws: WebSocket):
                 except (ValueError, TypeError):
                     continue
                 bot.toggle_account_pause(idx)
+            elif cmd == "apply_search_results":
+                try:
+                    idx = int(data.get("idx", -1))
+                except (ValueError, TypeError):
+                    continue
+                bot.apply_search_results(idx)
             elif cmd == "account_llm":
                 try:
                     idx = int(data.get("idx", -1))

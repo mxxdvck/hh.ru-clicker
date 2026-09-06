@@ -11,6 +11,7 @@ from glom import glom
 
 from app.logging_utils import _is_login_page
 from app.config import CONFIG, hh_base, resolve_letter_text
+from app.apply_mode import search_only_blocked
 from app.hh_api import get_headers
 from app.hh_client_factory import get_client
 from app.hh_client_fallback import FallbackHHClient
@@ -189,7 +190,7 @@ async def api_apply_check(body: dict):
             for k, v in [("resume_hash", acc["resume_hash"]), ("vacancy_id", vid),
                          ("letter", acc["letter"]), ("lux", "true"), ("ignore_postponed", "true")]:
                 data.add_field(k, v)
-            if CONFIG.search_only_mode:
+            if search_only_blocked():
                 finalize_apply(acc.get("name", ""), vid, resume_id, "error",
                                {"error_type": "search_only", "raw": "manual_check runtime search-only guard"}, state=None)
                 return {"status": "blocked", "vacancy_id": vid, "reason": "search_only",
@@ -357,7 +358,7 @@ async def api_apply_submit(body: dict):
                 else:
                     form.add_field(name, str(value))
 
-            if CONFIG.search_only_mode:
+            if search_only_blocked():
                 finalize_apply(acc.get("name", ""), vid, resume_id, "error",
                                {"error_type": "search_only", "raw": "manual_submit runtime search-only guard"}, state=None)
                 return {"status": "blocked", "vacancy_id": vid, "reason": "search_only",

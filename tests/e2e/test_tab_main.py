@@ -233,6 +233,56 @@ def test_search_only_paused_account_shows_found_vacancy_preview(ui):
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Отказ HH: 4")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Подходит: 6")
 
+
+def test_search_only_preview_apply_button_sends_queue_command(ui):
+    acc = _account(
+        idx=0,
+        status="search_only",
+        paused=True,
+        paused_reason="search_only",
+        total_vacancies=2,
+        search_preview=[
+            {"id": "101", "title": "Python Developer", "company": "Acme", "url": "https://hh.ru/vacancy/101"},
+            {"id": "102", "title": "Backend Developer", "company": "Beta", "url": "https://hh.ru/vacancy/102"},
+        ],
+    )
+    state = _state(accounts=[acc])
+    state["config"] = _base_config(search_only_mode=True)
+    _install_state(ui, state)
+    ui.open()
+    ui.push_state()
+
+    ui.page.locator("#acc-search-preview-wrap-0 summary").click()
+    button = ui.page.locator("#acc-search-apply-btn-0")
+    expect(button).to_be_visible()
+    expect(button).to_contain_text("(2)")
+    ui.page.once("dialog", lambda dialog: dialog.accept())
+    button.click()
+
+    commands = _expect_cmd(ui, type="apply_search_results", idx=0)
+    assert len(commands) == 1
+
+
+def test_search_only_preview_apply_button_hidden_while_not_paused(ui):
+    acc = _account(
+        idx=0,
+        status="applying",
+        paused=False,
+        paused_reason="",
+        total_vacancies=2,
+        search_preview=[
+            {"id": "101", "title": "Python Developer", "company": "Acme", "url": "https://hh.ru/vacancy/101"},
+            {"id": "102", "title": "Backend Developer", "company": "Beta", "url": "https://hh.ru/vacancy/102"},
+        ],
+    )
+    state = _state(accounts=[acc])
+    state["config"] = _base_config(search_only_mode=True)
+    _install_state(ui, state)
+    ui.open()
+    ui.push_state()
+
+    ui.page.locator("#acc-search-preview-wrap-0 summary").click()
+    expect(ui.page.locator("#acc-search-apply-btn-0")).to_be_hidden()
 def test_multiple_accounts_all_rendered(ui):
     """Несколько аккаунтов (4) → все карточки отрисованы в #accounts-grid."""
     accs = [_account(idx=i, name=f"acc_login_{i}") for i in range(4)]

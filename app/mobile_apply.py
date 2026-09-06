@@ -18,6 +18,7 @@ x-force-app-access). Fallback-политика: статусы 0 (сеть) / 40
 import json
 
 from app.config import CONFIG
+from app.apply_mode import search_only_blocked
 from app.hh_mobile_transport import (
     MobileAPIError,
     is_fallback_status,
@@ -162,7 +163,7 @@ def submit_response(acc: dict, vacancy_id: str, resume_id: str,
     - fallback-статусы (0 сеть / 401 / 403 / 5xx): MobileAPIError
       перекидывается наверх без обработки — для повтора через web-flow.
     """
-    if CONFIG.search_only_mode:
+    if search_only_blocked():
         return {
             "ok": False,
             "error_type": "search_only",
@@ -193,7 +194,7 @@ def submit_response(acc: dict, vacancy_id: str, resume_id: str,
     if source_label:
         params["source_label"] = source_label
     try:
-        if CONFIG.search_only_mode:
+        if search_only_blocked():
             return {"ok": False, "error_type": "search_only",
                     "error": "application sending disabled by search_only_mode at transport boundary"}
         data = mobile_request(

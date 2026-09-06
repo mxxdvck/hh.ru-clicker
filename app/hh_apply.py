@@ -12,6 +12,7 @@ from glom import glom
 
 from app.logging_utils import log_debug, _is_login_page
 from app.config import CONFIG, hh_base, resolve_letter_text
+from app.apply_mode import search_only_blocked
 from app.hh_http import HH
 # Egress-helpers aiohttp переехали в app/hh_http.py (единая точка egress);
 # реэкспорт для совместимости — routes/apply.py и тесты импортируют отсюда.
@@ -259,7 +260,7 @@ async def send_response_async(acc: dict, vid: str, letter_max_length: int | None
     """
     log_debug(f"📤 ОТПРАВКА ОТКЛИКА на вакансию {vid} | Аккаунт: {acc['name']}")
 
-    if CONFIG.search_only_mode:
+    if search_only_blocked():
         return "error", {"error_type": "search_only", "raw": "application sending disabled by search_only_mode"}
 
     xsrf = acc.get("cookies", {}).get("_xsrf", "")
@@ -292,7 +293,7 @@ async def send_response_async(acc: dict, vid: str, letter_max_length: int | None
         # http(s) → proxy= на запрос (см. _aio_egress_kwargs).
         sess_kw, req_kw = _aio_egress_kwargs()
         async with aiohttp.ClientSession(headers=headers, cookies=acc["cookies"], **sess_kw) as session:
-            if CONFIG.search_only_mode:
+            if search_only_blocked():
                 return "error", {"error_type": "search_only", "raw": "application sending disabled by search_only_mode"}
             async with session.post(
                 hh_base() + "/applicant/vacancy_response/popup",
@@ -321,7 +322,7 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
     Поддерживает textarea, radio, checkbox.
     Возвращает (result, info): result = sent | limit | test | error
     """
-    if CONFIG.search_only_mode:
+    if search_only_blocked():
         return "error", {"error_type": "search_only", "raw": "questionnaire sending disabled by search_only_mode"}
 
     headers_get = {
@@ -470,7 +471,7 @@ async def fill_and_submit_questionnaire(acc: dict, vid: str,
                     data.add_field(name, str(value))
 
             # Шаг 3: POST
-            if CONFIG.search_only_mode:
+            if search_only_blocked():
                 return "error", {"error_type": "search_only", "raw": "questionnaire runtime guard"}
 
             async with session.post(

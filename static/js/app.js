@@ -3653,6 +3653,7 @@ function buildCardHTML(acc) {
     </details>
     <details id="acc-search-preview-wrap-${acc.idx}" style="display:none;margin:5px 0;border:1px solid var(--border);border-radius:4px;padding:4px 7px">
       <summary style="cursor:pointer;color:var(--yellow);font-size:11px">🔎 Найденные вакансии: <span id="acc-search-preview-count-${acc.idx}">0</span></summary>
+      <button id="acc-search-apply-btn-${acc.idx}" class="btn-sm" style="display:none;margin:6px 0;color:var(--green);border-color:var(--green)" onclick="applyFoundSearchResults(${acc.idx},this)">✅ Откликнуться на найденные</button>
       <div id="acc-search-preview-${acc.idx}" style="margin-top:5px;max-height:260px;overflow:auto;font-size:11px"></div>
     </details>
     <div class="acc-hh-stats" id="acc-hh-${acc.idx}">${t('card_hh_loading')}</div>
@@ -3938,8 +3939,10 @@ function updateCard(card, acc) {
   const spWrap = document.getElementById('acc-search-preview-wrap-' + acc.idx);
   const spBody = document.getElementById('acc-search-preview-' + acc.idx);
   const spCount = document.getElementById('acc-search-preview-count-' + acc.idx);
+  const spApplyBtn = document.getElementById('acc-search-apply-btn-' + acc.idx);
   const preview = Array.isArray(acc.search_preview) ? acc.search_preview : [];
   const searchOnly = Boolean(State.lastSnapshot?.config?.search_only_mode);
+  const canApplyPreview = searchOnly && preview.length > 0 && acc.paused && acc.paused_reason === 'search_only';
 
   const fsWrap = document.getElementById('acc-search-filter-wrap-' + acc.idx);
   const fsBody = document.getElementById('acc-search-filter-' + acc.idx);
@@ -3991,6 +3994,11 @@ function updateCard(card, acc) {
   if (spWrap) {
     spWrap.style.display = (searchOnly && preview.length) ? '' : 'none';
     if (spCount) spCount.textContent = preview.length;
+    if (spApplyBtn) {
+      spApplyBtn.style.display = canApplyPreview ? '' : 'none';
+      spApplyBtn.disabled = !canApplyPreview;
+      spApplyBtn.textContent = `✅ Откликнуться на найденные (${preview.length})`;
+    }
     if (spBody && searchOnly && preview.length) {
       spBody.innerHTML = preview.map((v, n) => {
         const salary = (v.salary_from || v.salary_to)
@@ -5331,6 +5339,21 @@ async function sessionActivate(idx, btn) {
     alert('Сетевая ошибка: ' + (e?.message || String(e)));
     if (btn) { btn.disabled = false; btn.textContent = '▶ Запустить'; }
   }
+}
+
+function applyFoundSearchResults(idx, btn) {
+  const accounts = Array.isArray(State.lastSnapshot?.accounts) ? State.lastSnapshot.accounts : [];
+  const acc = accounts.find(a => Number(a.idx) === Number(idx));
+  const preview = Array.isArray(acc?.search_preview) ? acc.search_preview : [];
+  const count = preview.length;
+  if (!count) return;
+  const ok = confirm(`Откликнуться именно на текущие ${count} вакансий? Повторного поиска не будет. Дневной лимит, лимит запуска и все safety-проверки останутся включены.`);
+  if (!ok) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Запускаю отклики по списку…';
+  }
+  sendCmd({type:'apply_search_results', idx:Number(idx)});
 }
 
 async function sessionDeactivate(idx, btn) {

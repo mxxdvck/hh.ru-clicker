@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import threading
 
 from app.config import CONFIG
+from app.apply_mode import search_only_blocked
 from app import storage
 from app.application_ledger import (
     count_applied_today,
@@ -71,7 +72,7 @@ def check_apply_allowed(account_name: str, vacancy_id: str = "", state=None) -> 
     """Fail closed on search-only, duplicate and quota exhaustion."""
     account_name = str(account_name or "").strip()
     vacancy_id = str(vacancy_id or "").strip()
-    if CONFIG.search_only_mode:
+    if search_only_blocked():
         return ApplyDecision(False, "search_only", "Режим только поиска: отправка откликов запрещена")
     if vacancy_id and storage.is_applied(account_name, vacancy_id):
         return ApplyDecision(False, "already", "Отклик на эту вакансию уже записан как отправленный")
@@ -96,7 +97,7 @@ def reserve_apply(account_name: str, vacancy_id: str, resume_id: str = "",
     account_name = str(account_name or "").strip()
     vacancy_id = str(vacancy_id or "").strip()
     with _RESERVE_LOCK:
-        if CONFIG.search_only_mode:
+        if search_only_blocked():
             return ApplyDecision(False, "search_only",
                                  "Search-only mode: application sending is disabled")
         if vacancy_id and storage.is_applied(account_name, vacancy_id):

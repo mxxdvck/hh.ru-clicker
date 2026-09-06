@@ -18,6 +18,7 @@ from app.logging_utils import log_debug
 from app.secure_store import read_json as secure_read_json, write_json_atomic as secure_write_json
 from app.storage import persistence_transaction
 from app.config import CONFIG, resolve_letter_text
+from app.apply_mode import search_only_blocked
 from app.hh_http import HH
 from app.mobile_auth import MobileAuthError
 from app.user_agent import mobile_user_agent
@@ -1051,7 +1052,7 @@ def fetch_resume_status(acc: dict, force: bool = False) -> dict:
 
 def _oauth_apply(acc: dict, vid: str, message: str = "") -> tuple:
     """Apply to vacancy via OAuth API. Returns (result_str, info_dict)."""
-    if CONFIG.search_only_mode:
+    if search_only_blocked():
         return "error", {"error_type": "search_only", "raw": "application sending disabled by search_only_mode"}
 
     from app.llm import _randomize_text
@@ -1070,7 +1071,7 @@ def _oauth_apply(acc: dict, vid: str, message: str = "") -> tuple:
         data = {"vacancy_id": vid, "resume_id": resume_hash_quoted}
         if message:
             data["message"] = message
-        if CONFIG.search_only_mode:
+        if search_only_blocked():
             return "error", {"error_type": "search_only", "raw": "application sending disabled at OAuth transport boundary"}
         r = HH.post(
             "https://api.hh.ru/negotiations",

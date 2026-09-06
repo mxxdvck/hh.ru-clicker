@@ -519,3 +519,81 @@ def test_ledger_timestamp_uses_moscow_date_independent_of_host_timezone():
 
     stamp = datetime.fromisoformat(ledger_module._now())
     assert stamp.utcoffset() == timedelta(hours=3)
+
+
+def test_search_only_approved_context_is_narrow(monkeypatch):
+    from app.apply_mode import set_approved_search_apply
+
+    _reset_storage_cache()
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    monkeypatch.setattr(CONFIG, "daily_apply_limit", 0)
+    monkeypatch.setattr(CONFIG, "hh_daily_limit", 0)
+    monkeypatch.setattr(CONFIG, "run_apply_limit", 1)
+    set_approved_search_apply(False)
+
+    blocked = safety.reserve_apply("acc", "blocked-1", "resume", source="test")
+    assert blocked.allowed is False
+    assert blocked.code == "search_only"
+
+    set_approved_search_apply(True)
+    try:
+        approved = safety.reserve_apply("acc", "approved-1", "resume", source="approved-search")
+        assert approved.allowed is True
+
+        other_context_codes = []
+
+        def check_other_thread():
+            other_context_codes.append(safety.check_apply_allowed("acc", "other-thread").code)
+
+        thread = threading.Thread(target=check_other_thread)
+        thread.start()
+        thread.join(timeout=5)
+        assert other_context_codes == ["search_only"]
+
+        limited = safety.reserve_apply("acc", "approved-2", "resume", source="approved-search")
+        assert limited.allowed is False
+        assert limited.code == "run_limit"
+    finally:
+        safety.finalize_apply(
+            "acc", "approved-1", "resume", "error",
+            {"transient": True}, state=None,
+        )
+        set_approved_search_apply(False)
+
+
+def test_apply_search_results_resumes_exact_existing_queue(monkeypatch):
+    import app.manager as manager_mod
+    from app.state import AccountState
+
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    state = AccountState({
+        "name": "acc",
+        "short": "a",
+        "color": "#fff",
+        "urls": [],
+    })
+    state.vacancies_queue = ["101", "102"]
+    state.total_vacancies = 2
+    state.paused = True
+    state.paused_reason = "search_only"
+    state.status = "search_only"
+
+    mgr = manager_mod.BotManager.__new__(manager_mod.BotManager)
+    mgr.account_states = [state]
+    mgr.temp_states = {}
+    mgr._add_log = lambda *args, **kwargs: None
+
+    resumed = []
+    monkeypatch.setattr(
+        "app.ws_manager.ws_manager.resume_account",
+        lambda idx: resumed.append(idx),
+    )
+
+    assert mgr.apply_search_results(0) is True
+    assert state.vacancies_queue == ["101", "102"]
+    assert state.total_vacancies == 2
+    assert state._apply_search_results_requested is True
+    assert state.paused is False
+    assert state.paused_reason == ""
+    assert state.status == "applying"
+    assert resumed == [0]
