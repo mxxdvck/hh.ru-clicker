@@ -28,6 +28,7 @@ async def _lifespan(_app: FastAPI):
     """
     # ── startup ──
     broadcast_task = None
+    telegram_remote = None
     try:
         from app.storage import _cleanup_stale_tmp
         _cleanup_stale_tmp()  # подметаем config.tmp/accounts.tmp от прошлых crash'ей
@@ -38,14 +39,28 @@ async def _lifespan(_app: FastAPI):
         # Сохраняем handle: иначе task может быть garbage-collected до завершения
         # (Python docs warn) и shutdown не может его отменить (kimi-r14-1 #1).
         broadcast_task = asyncio.create_task(broadcast_loop(), name="broadcast_loop")
+        from app.telegram_remote import TelegramRemote
+        telegram_remote = TelegramRemote.from_env(bot)
+        if telegram_remote is not None:
+            telegram_remote.start()
         log_debug("lifespan: startup ok — accounts loaded, bot started, broadcast_loop scheduled")
     except Exception as e:
         log_debug(f"lifespan startup error: {e}")
+        if telegram_remote is not None:
+            try:
+                telegram_remote.stop()
+            except Exception:
+                pass
         raise
 
     yield
 
     # ── shutdown ──
+    if telegram_remote is not None:
+        try:
+            telegram_remote.stop()
+        except Exception as e:
+            log_debug(f"lifespan telegram_remote.stop error: {type(e).__name__}")
     if broadcast_task is not None:
         broadcast_task.cancel()
         try:
