@@ -28,6 +28,9 @@ from app.llm_policy import (
     ReplyDecision,
     candidate_profile_text,
     classify_employer_text,
+    is_non_actionable_employer_message,
+    is_reminder_message,
+    latest_unanswered_employer_question,
     evaluate_questionnaire_field,
     evaluate_reply_decision,
     questionnaire_response_schema,
@@ -425,6 +428,14 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
                                 ai_screener_hint: bool = False) -> ReplyDecision:
     """Generate a structured reply proposal and apply deterministic auto-send policy."""
     global _llm_rr_index
+    last_employer_text = next((str(msg.get("text") or "") for msg in reversed(conversation or [])
+                               if msg.get("sender") == "employer"), "")
+    if is_non_actionable_employer_message(last_employer_text):
+        return ReplyDecision(action="skip", category="system", reason="non-actionable employer notification")
+    if is_reminder_message(last_employer_text) and not latest_unanswered_employer_question(conversation):
+        return ReplyDecision(action="review", category="general",
+                             reason="reminder refers to a previous question that is unavailable in chat history")
+
     profiles = _enabled_profiles(CONFIG)
     forms = applicant_gender_forms()
     profile_text = candidate_profile_text(getattr(CONFIG, "llm_candidate_profile", {}) or {})
@@ -448,7 +459,9 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
         "fact is absent, put it in missing_facts and use action=review. For salary, relocation, travel, schedule, "
         "timezone, work format, and start date, never infer a preference from silence. For interview/call scheduling, "
         "test assignments, legal commitments such as NDA/contracts/offers, and personal/contact/identity details, "
-        "always use action=review even when you can draft a useful answer."
+        "always use action=review even when you can draft a useful answer. "
+        "If the newest employer message is only a reminder about an earlier question, answer the latest unanswered "
+        "employer question visible in the conversation. If that earlier question is not visible, do not invent it."
     )
     if resume_text and resume_text.strip():
         system += f"\n\n<TRUSTED_CANDIDATE_RESUME>\n{resume_text.strip()[:6500]}\n</TRUSTED_CANDIDATE_RESUME>"
@@ -494,15 +507,35 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
         if warning:
             log_debug(f"generate_llm_reply_decision: {warning}")
         try:
+            provider = _provider_name(profile)
+            max_tokens = 1200 if provider == "deepseek" else 700
             result = _complete_chat(
                 profile,
                 messages,
-                max_tokens=520,
+                max_tokens=max_tokens,
                 temperature=0.15,
                 response_format=_reply_response_format(profile),
             )
             raw = (result.text or "").strip()
+            if not raw and provider == "deepseek":
+                # DeepSeek reasoning models spend output budget on hidden reasoning too.
+                # A long resume/chat can therefore finish with zero visible content even
+                # though the HTTP request itself succeeded. Retry once with a larger budget.
+                log_debug(
+                    f"generate_llm_reply_decision {pname}: empty completion; retry with larger output budget"
+                )
+                result = _complete_chat(
+                    profile,
+                    messages,
+                    max_tokens=2200,
+                    temperature=0.10,
+                    response_format=_reply_response_format(profile),
+                )
+                raw = (result.text or "").strip()
             if not raw:
+                _set_llm_last_status(
+                    account_key, "reply", provider, "empty_completion", "provider returned no visible text"
+                )
                 continue
             parsed = _extract_json(raw)
             if parsed is None:
@@ -535,7 +568,9 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
             log_debug(f"generate_llm_reply_decision {pname} error: {error_detail}")
             _set_llm_last_status(account_key, "reply", _provider_name(profile), "error", error_detail)
             continue
-    _set_llm_last_status(account_key, "reply", "provider_chain", "failed_all", "all configured profiles failed")
+    # Keep the concrete last-provider status (empty_completion / invalid_json /
+    # auth / timeout) instead of overwriting it with a vague provider_chain error.
+    log_debug("generate_llm_reply_decision: no configured profile returned a usable reply")
     return ReplyDecision(action="skip", reason="all configured providers failed")
 
 
@@ -577,6 +612,38 @@ def classify_robot_button(text: str) -> str:
     return "neutral"
 
 
+def _normalize_robot_question(text: str) -> str:
+    return re.sub(r"[^a-zа-яё0-9]+", " ", str(text or "").casefold()).strip()
+
+
+def _prior_robot_answer_index(buttons: list[str], conversation: list, current_question: str) -> int:
+    target = _normalize_robot_question(current_question)
+    if not target:
+        return -1
+    messages = list(conversation or [])
+    current_idx = max((i for i, msg in enumerate(messages) if msg.get("sender") == "employer"), default=-1)
+    for i in range(current_idx - 1, -1, -1):
+        msg = messages[i]
+        if msg.get("sender") != "employer" or _normalize_robot_question(msg.get("text")) != target:
+            continue
+        for follow in messages[i + 1:current_idx]:
+            if follow.get("sender") == "employer":
+                break
+            if follow.get("sender") != "applicant":
+                continue
+            prior = str(follow.get("text") or "").strip()
+            if not prior:
+                break
+            exact = next((idx for idx, text in enumerate(buttons)
+                          if _normalize_robot_question(text) == _normalize_robot_question(prior)), -1)
+            if exact >= 0:
+                return exact
+            prior_kind = classify_robot_button(prior)
+            matches = [idx for idx, text in enumerate(buttons) if classify_robot_button(text) == prior_kind]
+            return matches[0] if prior_kind != "neutral" and len(matches) == 1 else -1
+    return -1
+
+
 def pick_robot_button(buttons: list, conversation: list, employer_name: str = "", account_key: str = "") -> tuple:
     """Pick a recruiter-bot button. Unknown personal commitments require review."""
     texts = [str(b.get("text", "")).strip() for b in buttons if isinstance(b, dict)]
@@ -588,6 +655,10 @@ def pick_robot_button(buttons: list, conversation: list, employer_name: str = ""
         if msg.get("sender") == "employer":
             last_employer = str(msg.get("text") or "").lower()
             break
+
+    prior_idx = _prior_robot_answer_index(texts, conversation, last_employer)
+    if 0 <= prior_idx < len(texts):
+        return prior_idx, texts[prior_idx], "prior_answer"
 
     safe_continue_markers = (
         "continue", "proceed", "interested",

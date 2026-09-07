@@ -247,3 +247,27 @@ def test_groq_gpt_oss_supports_json_schema():
     assert caps.json_object is True
     assert caps.json_schema is True
 
+
+
+def test_deepseek_transport_disables_default_thinking_for_routine_tasks(monkeypatch):
+    captured = {}
+
+    class Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            message = SimpleNamespace(content='{"ok":true}')
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None, _request_id="req")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(provider, "_openai_client", lambda *args: Client())
+    provider._complete_openai(
+        _deepseek(), [{"role": "user", "content": "hi"}],
+        max_tokens=200, temperature=0.0, response_format={"type": "json_object"}, timeout_seconds=1,
+    )
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert captured["response_format"] == {"type": "json_object"}

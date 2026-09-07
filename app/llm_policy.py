@@ -75,6 +75,69 @@ _TIMEZONE_MARKERS = ("timezone", "time zone", "мск", "часов")
 _WORK_FORMAT_MARKERS = ("office", "remote", "hybrid", "офис", "удален", "гибрид")
 _SCHEDULE_MARKERS = ("schedule", "shift", "график", "смен")
 
+_TERMINAL_NOTICE_PATTERNS = (
+    r"ваши ответы (?:успешно )?(?:отправлены|переданы) работодателю",
+    r"ответы (?:успешно )?(?:отправлены|переданы) работодателю",
+    r"если ваш отклик .* заинтересует",
+    r"благодарю вас за время и ответы.*рассмотрим .*резюме.*свяжемся",
+    r"рассмотрим .*резюме.*при положительном .*свяжемся",
+    r"спасибо за ответы.*(?:свяжемся|вернемся|вернёмся).*решени",
+    r"анкета (?:успешно )?(?:заполнена|завершена)",
+    r"опрос (?:успешно )?(?:заверш[её]н|пройден)",
+    r"your answers (?:have been )?sent to the employer",
+    r"answers (?:have been )?submitted to the employer",
+    r"questionnaire (?:is )?(?:complete|completed)",
+)
+
+_REMINDER_PATTERNS = (
+    r"напомина(?:ю|ем).*вопрос",
+    r"возвращаюсь.*(?:к|ко).*вопрос",
+    r"предыдущ(?:ий|его).*вопрос.*ответ",
+    r"remind(?:ing)?.*question",
+    r"follow(?:ing)? up.*question",
+)
+
+_QUESTION_TEXT_PATTERNS = (
+    r"\?", r"\bкогда\b", r"\bсколько\b", r"\bкако(?:й|я|е|ие)\b",
+    r"\bготов(?:ы|а)?\b", r"\bможете\b", r"\bвас устраивает\b",
+    r"\bрасскажите\b", r"\bопишите\b", r"\bподскажите\b",
+    r"\bwhat\b", r"\bwhen\b", r"\bhow\b", r"\bare you\b", r"\bcan you\b",
+)
+
+
+def is_non_actionable_employer_message(text: str) -> bool:
+    value = _norm(text)
+    return any(re.search(pattern, value, flags=re.I) for pattern in _TERMINAL_NOTICE_PATTERNS)
+
+
+def is_reminder_message(text: str) -> bool:
+    value = _norm(text)
+    return any(re.search(pattern, value, flags=re.I) for pattern in _REMINDER_PATTERNS)
+
+
+def latest_unanswered_employer_question(conversation: list | None) -> str:
+    messages = list(conversation or [])
+    last_employer = max((i for i, msg in enumerate(messages) if msg.get("sender") == "employer"), default=-1)
+    if last_employer <= 0:
+        return ""
+    for idx in range(last_employer - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("sender") != "employer":
+            continue
+        text = str(msg.get("text") or "").strip()
+        if not text or is_non_actionable_employer_message(text):
+            continue
+        if not any(re.search(pattern, text, flags=re.I) for pattern in _QUESTION_TEXT_PATTERNS):
+            continue
+        next_sender = next((
+            m.get("sender") for m in messages[idx + 1:last_employer]
+            if m.get("sender") in {"applicant", "employer"} and str(m.get("text") or "").strip()
+        ), "")
+        if next_sender == "applicant":
+            continue
+        return text
+    return ""
+
 
 @dataclass
 class ReplyDecision:
