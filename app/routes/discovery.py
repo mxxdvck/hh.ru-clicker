@@ -9,6 +9,7 @@ from app.instances import bot
 from app.mobile_autosearch import delete_autosearch, fetch_autosearches, update_autosearch
 from app.mobile_discovery import fetch_bell_notifications, fetch_hidden, restore_hidden
 from app.storage import get_applied_list, get_interviews_list
+from app.application_ledger import get_status_counts
 
 
 router = APIRouter()
@@ -95,4 +96,61 @@ async def api_conversion(idx: int):
     return {
         "ok": True, "applied": len(applied_ids), "interviews": matched,
         "conversion_percent": round(matched * 100 / len(applied_ids), 1) if applied_ids else 0,
+    }
+
+
+@router.get("/api/account/{idx}/operations_summary")
+async def api_operations_summary(idx: int):
+    """Phase 5F read-model: live cycle, durable outcomes and ledger reliability."""
+    acc = _acc(idx)
+    if not acc:
+        return {"ok": False, "error": "Аккаунт не найден"}
+
+    conversion = await api_conversion(idx)
+    state = _state(idx)
+    status_counts = get_status_counts(str(acc.get("name") or ""))
+    filter_stats = dict(getattr(state, "filter_stats", {}) or {}) if state else {}
+
+    found = None
+    filtered = None
+    queue = None
+    sent_today = None
+    if state:
+        if filter_stats:
+            found = int(filter_stats.get("raw_collected", getattr(state, "found_vacancies", 0)) or 0)
+            filtered = int(filter_stats["accepted"]) if "accepted" in filter_stats else None
+            queue = len(list(getattr(state, "vacancies_queue", []) or []))
+        sent_today = int(getattr(state, "daily_sent", 0) or 0)
+
+    hh_stats_known = bool(getattr(state, "hh_stats_updated", None)) if state else False
+    viewed = int(getattr(state, "hh_viewed", 0) or 0) if hh_stats_known else None
+    normalized = {
+        key: int(status_counts.get(key, 0) or 0)
+        for key in (
+            "applying", "applied", "already", "interrupted",
+            "failed_transient", "failed_permanent",
+        )
+    }
+    return {
+        "ok": True,
+        "account": str(acc.get("name") or ""),
+        "cycle": {
+            "found": found, "filtered": filtered, "queue": queue,
+            "sent_today": sent_today,
+            "status": str(getattr(state, "status", "") or "") if state else "",
+        },
+        "outcome": {
+            "applied": int(conversion.get("applied", 0) or 0),
+            "viewed": viewed,
+            "interviews": int(conversion.get("interviews", 0) or 0),
+            "conversion_percent": conversion.get("conversion_percent", 0),
+        },
+        "ledger": {"total": sum(normalized.values()), "statuses": normalized},
+        "sources": {
+            "cycle": "current worker snapshot",
+            "applied": "local applied history",
+            "viewed": "HH negotiation statistics" if hh_stats_known else "unavailable",
+            "interviews": "local interview identity + HH account counter",
+            "ledger": "applications.sqlite3",
+        },
     }

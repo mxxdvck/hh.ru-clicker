@@ -1,0 +1,47 @@
+{
+  "legacy_tabs": [
+    "main",
+    "log",
+    "applied",
+    "tests",
+    "db",
+    "hh",
+    "views",
+    "apply",
+    "llm",
+    "hedi",
+    "settings"
+  ],
+  "critical_dom_ids": [
+    "tabs",
+    "pause-btn",
+    "apply-mode-badge",
+    "accounts-grid",
+    "search-only-mode",
+    "daily-apply-limit",
+    "run-apply-limit",
+    "use-oauth-apply",
+    "auto-apply-tests",
+    "llm-auto-send",
+    "apply-account",
+    "apply-vacancy",
+    "apply-result",
+    "apply-questionnaire"
+  ],
+  "critical_ws_commands": [
+    "pause_toggle",
+    "account_pause",
+    "apply_search_results",
+    "account_llm",
+    "account_oauth",
+    "set_config"
+  ],
+  "critical_api_paths": [
+    "/api/applied",
+    "/api/tests",
+    "/api/interviews",
+    "/api/vacancies",
+    "/api/apply/check",
+    "/api/apply/submit"
+  ]
+}

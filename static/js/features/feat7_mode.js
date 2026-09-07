@@ -5,9 +5,8 @@
  *   - PUT сохраняет mode в accounts.json или browser_sessions.json;
  *     GET нужен для инициализации dropdown.
  *
- * Интеграция (без правок app.js): оборачиваем window.buildSessList,
- * window.buildAccCookiesList и window.updateCard — вызов оригинала сохраняется,
- * добавляем своё после. Скрипт грузится ПОСЛЕ app.js (функции app.js — глобальные).
+ * Integration uses Phase 5 events: hh:account-card-updated, hh:snapshot
+ * and hh:tabchange. Legacy app.js render functions are never reassigned.
  *
  * Режим-редактор вставляется в двух местах:
  *   - Настройки → 🌐 Браузерные сессии (#sess-list, блоки #sess-row-<idx>) — как есть;
@@ -17,7 +16,7 @@
 (function () {
   'use strict';
 
-  // Guard от двойного оборачивания (повторная загрузка скрипта / dev-reload).
+  // Guard against duplicate installation / dev reload.
   if (window.__feat7ModeInstalled) return;
   window.__feat7ModeInstalled = true;
 
@@ -205,42 +204,28 @@
   // ── Обёртка updateCard: badge effective mode ──────────────────────
   // updateCard вызывается на каждый snapshot (~0.3s) — поэтому badge
   // создаём один раз (ensureBadge) и только обновляем текст/класс из кэша.
-  // fetch делаем ОДИН раз на аккаунт (modeCache), не на каждый updateCard.
-  var origUpdateCard = window.updateCard;
-  if (typeof origUpdateCard === 'function') {
-    window.updateCard = function (card, acc) {
-      var r = origUpdateCard.apply(this, arguments);
-      try {
-        if (card && acc && typeof acc.idx !== 'undefined') {
-          var identity = (acc.temp ? 't' : 'r') + '|' + (acc.resume_hash || '') + '|' + (acc.name || acc.short || '');
-          if (modeIdentity[acc.idx] && modeIdentity[acc.idx] !== identity) {
-            delete modeCache[acc.idx];
-            delete modeInflight[acc.idx];
-          }
-          modeIdentity[acc.idx] = identity;
-          renderBadge(card, acc.idx);
-          if (!modeCache[acc.idx] && !modeInflight[acc.idx]) {
-            fetchMode(acc.idx).then(function () { renderBadge(card, acc.idx); });
-          }
-        }
-      } catch (e) { /* feat7 не должен ломать обновление карточек */ }
-      return r;
-    };
+  function handleAccountCard(card, acc) {
+    try {
+      if (!card || !acc || typeof acc.idx === 'undefined') return;
+      var identity = (acc.temp ? 't' : 'r') + '|' + (acc.resume_hash || '') + '|' + (acc.name || acc.short || '');
+      if (modeIdentity[acc.idx] && modeIdentity[acc.idx] !== identity) {
+        delete modeCache[acc.idx];
+        delete modeInflight[acc.idx];
+      }
+      modeIdentity[acc.idx] = identity;
+      renderBadge(card, acc.idx);
+      if (!modeCache[acc.idx] && !modeInflight[acc.idx]) {
+        fetchMode(acc.idx).then(function () { renderBadge(card, acc.idx); });
+      }
+    } catch (e) { /* feat7 must never break card rendering */ }
   }
 
-  // ── Обёртка buildSessList: dropdown mode в блоках сессий ──────────
-  // После оригинала добавляем в каждый блок (#sess-row-<idx>) строку mode.
-  // Guard: .feat7-mode-row уже есть → skip (оригинал при неизменном
-  // fingerprint innerHTML не пересобирает).
-  var origBuildSessList = window.buildSessList;
-  if (typeof origBuildSessList === 'function') {
-    window.buildSessList = function (snap) {
-      var r = origBuildSessList.apply(this, arguments);
-      try { decorateSessList(snap); } catch (e) { /* feat7: sess-list не критичен */ }
-      return r;
-    };
-  }
+  window.addEventListener('hh:account-card-updated', function (event) {
+    var detail = event && event.detail || {};
+    handleAccountCard(detail.card, detail.account);
+  });
 
+  // Settings decorators run after the legacy render through Phase 5 events.
   function decorateSessList(snap) {
     var sessions = ((snap && snap.accounts) || []).filter(function (a) { return a && a.temp; });
     sessions.forEach(function (acc) {
@@ -256,16 +241,7 @@
   // textarea#ck-ta-<idx>, flex-строка с кнопкой обновления кук; id у блоков нет).
   // Блоки пересоздаются при смене числа аккаунтов → идемпотентность по
   // .feat7-mode-row внутри блока. Temp пропускаем здесь, потому что их mode
-  // уже редактируется в отдельном списке браузерных сессий.
-  var origBuildAccCookiesList = window.buildAccCookiesList;
-  if (typeof origBuildAccCookiesList === 'function') {
-    window.buildAccCookiesList = function (snap) {
-      var r = origBuildAccCookiesList.apply(this, arguments);
-      try { decorateAccCookiesList(snap); } catch (e) { /* feat7: acc-cookies не критичен */ }
-      return r;
-    };
-  }
-
+  // Account cookie controls use the same event-driven bridge.
   function decorateAccCookiesList(snap) {
     var el = document.getElementById('acc-cookies-list');
     if (!el) return;
@@ -283,17 +259,29 @@
 
   // Если скрипт загрузился позже первого snapshot'а (карточки уже в DOM) —
   // дорисовываем badge для существующих основных аккаунтов.
+  function decorateSettings(snap) {
+    try { decorateSessList(snap); } catch (e) {}
+    try { decorateAccCookiesList(snap); } catch (e) {}
+  }
+
+  window.addEventListener('hh:snapshot', function (event) {
+    decorateSettings(event && event.detail && event.detail.snapshot);
+  });
+  window.addEventListener('hh:tabchange', function (event) {
+    var detail = event && event.detail || {};
+    if (detail.section === 'settings') decorateSettings({ accounts: lastSnapshotAccounts() || [] });
+  });
+
+  // Late-load catch-up for already rendered cards/settings.
   try {
     var snapAccounts = lastSnapshotAccounts();
     if (snapAccounts) {
       snapAccounts.forEach(function (acc) {
-        if (acc) {
-          var card = document.getElementById('card-' + acc.idx);
-          if (card && !modeCache[acc.idx] && !modeInflight[acc.idx]) {
-            fetchMode(acc.idx).then(function () { renderBadge(card, acc.idx); });
-          }
-        }
+        if (!acc) return;
+        var card = document.getElementById('card-' + acc.idx);
+        if (card) handleAccountCard(card, acc);
       });
+      decorateSettings({ accounts: snapAccounts });
     }
-  } catch (e) { /* опциональный путь — не критично */ }
+  } catch (e) { /* optional catch-up path */ }
 })();

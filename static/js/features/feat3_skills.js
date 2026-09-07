@@ -1,7 +1,7 @@
 // feat3_skills.js — Skills gap badge в карточке аккаунта (feat3).
 //
-// Грузится ПОСЛЕ app.js. Обёртывает window.updateCard: при первом вызове
-// для карточки создаёт секцию с кнопкой «🧠 Skills: что советует HH»,
+// Loaded after app.js. Integrates through hh:account-card-updated; no render monkey-patch.
+// The first card event adds the existing Skills recommendation section.
 // при повторных snapshot'ах (~0.3с) секцию НЕ трогает (никакой перерисовки).
 // Клик по кнопке → POST /api/account/<idx>/skills_recommend → чипы gap/have
 // + ссылка «📝 Открыть редактор резюме».
@@ -118,19 +118,25 @@
     }
   });
 
-  // ── Обёртка window.updateCard ─────────────────────────────────────────
-  const origUpdateCard = window.updateCard;
-  if (typeof origUpdateCard === 'function') {
-    window.updateCard = function (card, acc) {
-      const out = origUpdateCard.apply(this, arguments);
-      try {
-        if (card && acc && acc.idx !== undefined) ensureSection(card, acc);
-      } catch (e) {
-        if (window.console) console.warn('[feat3-skills]', e);
-      }
-      return out;
-    };
-  } else if (window.console) {
-    console.warn('[feat3-skills] window.updateCard не найдена — скрипт загружен до app.js?');
+  function handleAccountCardUpdated(event) {
+    const detail = event && event.detail || {};
+    const card = detail.card;
+    const acc = detail.account;
+    try {
+      if (card && acc && acc.idx !== undefined) ensureSection(card, acc);
+    } catch (e) {
+      if (window.console) console.warn('[feat3-skills]', e);
+    }
   }
+
+  window.addEventListener('hh:account-card-updated', handleAccountCardUpdated);
+
+  // Late-load catch-up for cards rendered before this feature script loaded.
+  try {
+    const accounts = (typeof State !== 'undefined' && State.lastSnapshot && State.lastSnapshot.accounts) || [];
+    accounts.forEach((acc) => {
+      const card = document.getElementById('card-' + acc.idx);
+      if (card) ensureSection(card, acc);
+    });
+  } catch (_) {}
 })();

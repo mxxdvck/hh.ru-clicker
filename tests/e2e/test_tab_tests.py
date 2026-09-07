@@ -177,7 +177,10 @@ def test_apply_tests_fail_reverts_checkbox(ui):
 
     cb = ui.page.locator("#acc-apply-cb-0")
     expect(cb).to_be_visible()
-    cb.check()
+    # click(), not check(): this scenario intentionally rolls the checkbox back
+    # immediately after the mocked HTTP 500. Playwright check() requires the
+    # post-click state to remain checked and races with the expected rollback.
+    cb.click()
 
     # applyTestsToggle: !data.ok (или fetch-exception) → cb.checked = !cb.checked
     expect(cb).not_to_be_checked()

@@ -964,8 +964,8 @@ class BotManager:
             except Exception:
                 pass
 
-    def apply_search_results(self, idx: int) -> bool:
-        """Apply exactly the current search-only shortlist without searching again."""
+    def apply_search_results(self, idx: int, vacancy_ids: list | None = None) -> bool:
+        """Apply the current safe-search queue or a validated subset without re-searching."""
         state = None
         if 0 <= idx < len(self.account_states):
             state = self.account_states[idx]
@@ -980,12 +980,37 @@ class BotManager:
                 return False
             if not state.paused or state.paused_reason != "search_only":
                 return False
+            requested_ids = None
+            approved_queue = queue
+            if vacancy_ids is not None:
+                if not isinstance(vacancy_ids, (list, tuple)):
+                    return False
+                queue_by_id = {str(v).strip(): v for v in queue}
+                requested_ids = []
+                seen = set()
+                for raw in vacancy_ids:
+                    vid = str(raw or "").strip()
+                    if not vid or vid in seen:
+                        continue
+                    if vid not in queue_by_id:
+                        return False
+                    requested_ids.append(vid)
+                    seen.add(vid)
+                if not requested_ids:
+                    return False
+                selected = set(requested_ids)
+                approved_queue = [v for v in queue if str(v).strip() in selected]
+                if not approved_queue:
+                    return False
+                state.vacancies_queue = list(approved_queue)
+                state.total_vacancies = len(approved_queue)
+            state._apply_search_results_ids = requested_ids
             state._apply_search_results_requested = True
             state.current_vacancy_idx = 0
             state.paused = False
             state.paused_reason = ""
             state.status = "applying"
-            state.status_detail = f"Подтверждён список из {len(queue)} вакансий; повторный поиск не запускается"
+            state.status_detail = f"Подтверждён список из {len(approved_queue)} вакансий; повторный поиск не запускается"
         if 0 <= idx < len(self.account_states):
             try:
                 from app.ws_manager import ws_manager
@@ -994,7 +1019,7 @@ class BotManager:
                 pass
         self._add_log(
             state.short, state.color,
-            f"✅ Пользователь подтвердил текущие {len(queue)} вакансий для отклика без нового поиска",
+            f"✅ Пользователь подтвердил текущие {len(approved_queue)} вакансий для отклика без нового поиска",
             "success",
         )
         return True
@@ -1206,6 +1231,16 @@ class BotManager:
                     "salary_from": meta.get("salary_from"),
                     "salary_to": meta.get("salary_to"),
                     "url": meta.get("url") or f"{hh_base()}/vacancy/{vid}",
+                    "source_url": meta.get("source_url", ""),
+                    "source_query": meta.get("source_query", ""),
+                    "published_at": meta.get("published_at") or meta.get("created_at") or "",
+                    "schedules": list(meta.get("schedules") or []),
+                    "has_test": bool(meta.get("has_test")),
+                    "response_letter_required": bool(meta.get("response_letter_required")),
+                    "hr_online": meta.get("hr_online", ""),
+                    "chat_write_possibility": meta.get("chat_write_possibility", ""),
+                    "quick_responses_allowed": meta.get("quick_responses_allowed"),
+                    "accredited_it_employer": meta.get("accredited_it_employer"),
                 })
             return preview
 
@@ -2052,6 +2087,19 @@ class BotManager:
                 all_vacancies.extend(url_vacancies)
 
                 query = extract_search_query(url)
+                for raw_vid in url_vacancies:
+                    vid = str(raw_vid)
+                    meta = state.vacancy_meta.setdefault(vid, {})
+                    meta.setdefault("source_url", url)
+                    meta.setdefault("source_query", query)
+                    sal = salary_map.get(vid)
+                    if sal is None:
+                        sal = salary_map.get(raw_vid)
+                    if sal is not None and meta.get("salary_from") is None:
+                        meta["salary_from"] = sal
+                    schedules = schedule_map.get(vid) or schedule_map.get(raw_vid) or set()
+                    if schedules:
+                        meta["schedules"] = sorted(str(value) for value in schedules)
                 if url_vacancies:
                     self._add_log(state.short, state.color, f"\U0001f4ca {query}: {len(url_vacancies)}", "info")
             # Сохраняем статистику по URL для снапшота
@@ -2495,7 +2543,23 @@ class BotManager:
                     return
                 if getattr(state, "_apply_search_results_requested", False):
                     with state._state_lock:
+                        requested_ids = getattr(state, "_apply_search_results_ids", None)
                         state._apply_search_results_requested = False
+                        state._apply_search_results_ids = None
+                    if requested_ids is not None:
+                        selected = {str(v).strip() for v in requested_ids}
+                        filtered = [v for v in filtered if str(v).strip() in selected]
+                    if not filtered:
+                        state.status = "search_only"
+                        state.status_detail = "Подтверждённый список пуст; отклики не отправлены"
+                        state.paused = True
+                        state.paused_reason = "search_only"
+                        self._add_log(state.short, state.color,
+                                      "⚠️ Подтверждённый safe-search список пуст; отправка отменена",
+                                      "warning")
+                        continue
+                    state.vacancies_queue = list(filtered)
+                    state.total_vacancies = len(filtered)
                     approved_search_batch = True
                     approved_start_sent = int(getattr(state, "sent", 0) or 0)
                     set_approved_search_apply(True)

@@ -1,8 +1,7 @@
 # Документация hh.ru-clicker
 
-Индекс документации проекта. Состояние: ветка `refactor/mobile-api`
-(HEAD `b3bba5a` = `origin/main` + uncommitted Phase 0 HHClient-абстракции
-+ mobile OTP из ветки `pr20`).
+Индекс документации проекта. Для текущего Dashboard roadmap используйте
+Project Phase 5; исторические mobile-фазы ниже сохранены как техническая документация.
 
 ## Для юзеров бота
 
@@ -15,6 +14,7 @@
 
 | Документ | О чём |
 |---|---|
+| [PROJECT_PHASE5_DASHBOARD_UX.md](PROJECT_PHASE5_DASHBOARD_UX.md) | Реализованный Project Phase 5: Dashboard UX, operations, frontend events, responsive/a11y и release gate |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Устройство проекта: FastAPI + воркеры + два канала к hh.ru; интерфейс `HHClient` (37 методов), `WebHHClient`/`MobileHHClient`, фабрика `get_client()` и выбор `mode`; два сквозных пути запроса (отклик, WebSocket-push); известные несоответствия Phase 0 |
 | [API_REFERENCE.md](API_REFERENCE.md) | Reference по `HHClient`: сигнатура + вызов + форма ответа для всех 37 методов; таблица web/mobile-поддержки с кандидат-эндпоинтами api.hh.ru для фаз 2–4; конвенция ошибок |
 | [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) | Все 56 полей `Config` (`app/config.py`): default, смысл, где используется; env-переменные (настоящий override — `HH_PROXY`); детально про `default_client_mode` и поле `mode` аккаунтов/temp-сессий |

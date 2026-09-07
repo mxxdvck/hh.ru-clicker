@@ -1,0 +1,169 @@
+/* Project Phase 5F: application operations summary. */
+.phase5-applications-summary {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.phase5-app-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card2);
+}
+
+.phase5-app-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.phase5-app-subtitle {
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.phase5-app-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.phase5-app-controls select,
+.phase5-app-refresh {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+}
+
+.phase5-app-refresh {
+  color: var(--cyan);
+  cursor: pointer;
+}
+
+.phase5-app-controls select:focus-visible,
+.phase5-app-refresh:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.phase5-app-block {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card2);
+}
+
+.phase5-app-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.phase5-app-block-title {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.phase5-app-block-note {
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.phase5-app-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.phase5-app-grid-reliability {
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+}
+
+.phase5-app-metric {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.phase5-app-metric-label {
+  color: var(--dim);
+  font-size: 9px;
+}
+
+.phase5-app-metric-value {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.phase5-app-metric-note {
+  margin-top: 4px;
+  min-height: 13px;
+  color: var(--dim);
+  font-size: 8px;
+  line-height: 1.3;
+}
+
+.phase5-app-metric[data-kind="safe"] .phase5-app-metric-value { color: var(--green); }
+.phase5-app-metric[data-kind="warning"] .phase5-app-metric-value { color: var(--yellow); }
+.phase5-app-metric[data-kind="danger"] .phase5-app-metric-value { color: var(--red); }
+.phase5-app-metric[data-kind="info"] .phase5-app-metric-value { color: var(--cyan); }
+
+.phase5-app-data-note {
+  padding: 9px 11px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+@media (max-width: 1100px) {
+  .phase5-app-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .phase5-app-grid-reliability { grid-template-columns: repeat(3, minmax(110px, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .phase5-app-head { display: block; padding: 11px; }
+  .phase5-app-controls { margin-top: 9px; }
+  .phase5-app-controls select,
+  .phase5-app-refresh { width: 100%; min-height: 36px; }
+  .phase5-app-block { padding: 10px; }
+  .phase5-app-block-head { display: block; }
+  .phase5-app-block-note { margin-top: 3px; text-align: left; }
+  .phase5-app-grid,
+  .phase5-app-grid-reliability { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase5-applications-summary *,
+  .phase5-applications-summary *::before,
+  .phase5-applications-summary *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

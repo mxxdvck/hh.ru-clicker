@@ -1,0 +1,121 @@
+html.phase5-a11y {
+  --phase5-ui-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html.phase5-a11y .phase5-nav-shell,
+html.phase5-a11y .phase5-overview,
+html.phase5-a11y .phase5-settings-toolbar,
+html.phase5-a11y .phase5-vacancy-workspace,
+html.phase5-a11y .phase5-applications-summary,
+html.phase5-a11y .phase5-review-center {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-family: var(--phase5-ui-font);
+}
+
+html.phase5-a11y .phase5-location-kicker,
+html.phase5-a11y .phase5-kpi-note,
+html.phase5-a11y .phase5-health-meta,
+html.phase5-a11y .phase5-health-details,
+html.phase5-a11y .phase5-app-block-note,
+html.phase5-a11y .phase5-app-metric-label,
+html.phase5-a11y .phase5-app-metric-note,
+html.phase5-a11y .phase5-app-data-note {
+  font-size: 10px;
+  line-height: 1.4;
+}
+html.phase5-a11y .phase5-action-btn,
+html.phase5-a11y .phase5-settings-clear,
+html.phase5-a11y .phase5-settings-chip,
+html.phase5-a11y .phase5-vacancy-apply,
+html.phase5-a11y .phase5-vacancy-apply-one,
+html.phase5-a11y .phase5-vacancy-secondary,
+html.phase5-a11y .phase5-app-refresh,
+html.phase5-a11y .phase5-review-refresh,
+html.phase5-a11y .phase5-review-copy,
+html.phase5-a11y .phase5-review-open {
+  min-height: 34px;
+}
+
+html.phase5-a11y .phase5-health-details summary {
+  min-height: 32px;
+}
+
+html.phase5-a11y .phase5-nav-item:focus-visible,
+html.phase5-a11y .phase5-action-btn:focus-visible,
+html.phase5-a11y .phase5-settings-chip:focus-visible,
+html.phase5-a11y .phase5-review-open:focus-visible {
+  box-shadow: 0 0 0 3px rgba(57, 208, 216, .16);
+}
+
+html.phase5-a11y .phase5-location,
+html.phase5-a11y .phase5-app-block-head,
+html.phase5-a11y .phase5-health-main {
+  min-width: 0;
+}
+@media (max-width: 768px) {
+  html.phase5-a11y .phase5-nav-item {
+    min-height: 48px;
+  }
+
+  html.phase5-a11y .phase5-settings-search,
+  html.phase5-a11y .phase5-settings-clear,
+  html.phase5-a11y .phase5-settings-chip,
+  html.phase5-a11y .phase5-vacancy-controls input,
+  html.phase5-a11y .phase5-vacancy-controls select,
+  html.phase5-a11y .phase5-vacancy-apply,
+  html.phase5-a11y .phase5-vacancy-apply-one,
+  html.phase5-a11y .phase5-vacancy-secondary,
+  html.phase5-a11y .phase5-app-controls select,
+  html.phase5-a11y .phase5-app-refresh,
+  html.phase5-a11y .phase5-review-controls select,
+  html.phase5-a11y .phase5-review-refresh,
+  html.phase5-a11y .phase5-review-copy,
+  html.phase5-a11y .phase5-review-open,
+  html.phase5-a11y .phase5-health-actions .phase5-action-btn {
+    min-height: 40px;
+  }
+
+  html.phase5-a11y .phase5-health-details summary {
+    min-height: 36px;
+  }
+}
+html.phase5-a11y .panel.active {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  html.phase5-a11y .panel.active {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  html.phase5-a11y .phase5-location {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 768px) {
+  html.phase5-a11y #header {
+    flex-wrap: wrap;
+    gap: 7px 9px;
+    padding: 8px 10px;
+  }
+
+  html.phase5-a11y #header h1 {
+    flex: 1 1 calc(100% - 24px);
+    min-width: 0;
+  }
+
+  html.phase5-a11y #header > div,
+  html.phase5-a11y #header > span,
+  html.phase5-a11y #header > button {
+    max-width: 100%;
+  }
+
+  html.phase5-a11y #uptime {
+    margin-left: 0;
+  }
+}

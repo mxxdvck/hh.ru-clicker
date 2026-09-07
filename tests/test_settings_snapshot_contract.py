@@ -67,3 +67,27 @@ def test_account_state_rebuilds_daily_count_from_ledger(monkeypatch):
     monkeypatch.setattr(state_mod, "get_account_applied", lambda name: {})
     state = state_mod.AccountState({"name": "Test", "short": "T", "color": "yellow", "urls": []})
     assert state.daily_sent == 12
+
+
+def test_dashboard_snapshot_search_preview_keeps_phase5_metadata(monkeypatch):
+    bot = _empty_bot(monkeypatch)
+    state = manager.AccountState({"name": "Test", "short": "T", "color": "yellow", "urls": []})
+    state.vacancies_queue = ["101"]
+    state.vacancy_meta["101"] = {
+        "title": "1C Developer", "company": "Acme", "salary_from": 220000,
+        "source_url": "https://hh.ru/search/vacancy?text=1C", "source_query": "1C",
+        "published_at": "2026-09-06T12:00:00+03:00", "schedules": ["remote"],
+        "has_test": True, "response_letter_required": True,
+        "hr_online": "2026-09-06T13:00:00+03:00", "chat_write_possibility": "ENABLED",
+        "quick_responses_allowed": True, "accredited_it_employer": True,
+    }
+    bot.account_states = [state]
+
+    item = bot.get_state_snapshot()["accounts"][0]["search_preview"][0]
+    assert item["source_query"] == "1C"
+    assert item["published_at"].startswith("2026-09-06")
+    assert item["schedules"] == ["remote"]
+    assert item["has_test"] is True
+    assert item["hr_online"]
+    assert item["quick_responses_allowed"] is True
+    assert item["accredited_it_employer"] is True

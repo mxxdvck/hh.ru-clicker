@@ -136,7 +136,8 @@ async def websocket_endpoint(ws: WebSocket):
                     idx = int(data.get("idx", -1))
                 except (ValueError, TypeError):
                     continue
-                bot.apply_search_results(idx)
+                vacancy_ids = data.get("vacancy_ids")
+                bot.apply_search_results(idx, vacancy_ids=vacancy_ids)
             elif cmd == "account_llm":
                 try:
                     idx = int(data.get("idx", -1))
