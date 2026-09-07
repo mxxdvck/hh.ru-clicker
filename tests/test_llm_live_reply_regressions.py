@@ -1,5 +1,7 @@
 import app.llm as llm
 import app.llm_policy as policy
+from app.config import CONFIG
+from app.llm_provider import LLMResult
 from app.manager import _human_llm_reason, _llm_review_text, _select_quick_reply
 
 
@@ -149,3 +151,161 @@ def test_empty_provider_status_keeps_concrete_failure(monkeypatch):
     assert decision.action == "skip"
     assert status["provider"] == "deepseek"
     assert status["status"] == "empty_completion"
+
+
+def test_interest_invitation_has_its_own_safe_category():
+    assert policy.classify_employer_text("Интересует ли вас наше предложение?") == "interest"
+
+
+def test_reply_prompt_forbids_assistant_like_long_interview(monkeypatch):
+    captured = {}
+    profile = {
+        "name": "DeepSeek", "api_key": "x", "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash", "enabled": True,
+    }
+    monkeypatch.setattr(llm, "_enabled_profiles", lambda _config: [profile])
+    monkeypatch.setattr(CONFIG, "llm_profile_mode", "fallback")
+    monkeypatch.setattr(CONFIG, "llm_candidate_profile", {})
+
+    def fake_complete(_profile, messages, **kwargs):
+        captured["system"] = messages[0]["content"]
+        return LLMResult(
+            text='{"answer":"Добрый день! Да, предложение интересно. Готов обсудить подробнее.",'
+                 '"action":"send","confidence":0.99,"category":"interest","evidence":[],'
+                 '"missing_facts":[],"reason":""}',
+            provider="deepseek", profile="DeepSeek", model="deepseek-v4-flash",
+            protocol="openai_compatible", latency_ms=10,
+        )
+
+    monkeypatch.setattr(llm, "_complete_chat", fake_complete)
+    decision = llm.generate_llm_reply_decision([
+        {"sender": "employer", "text": "Интересует ли вас наше предложение?"},
+    ], account_key="style-interest")
+    assert decision.category == "interest"
+    assert decision.auto_send_allowed is True
+    assert "Default to 1-3 short sentences" in captured["system"]
+    assert "never like an assistant analysing a candidate" in captured["system"]
+
+
+def test_interest_marker_does_not_hide_interview_risk():
+    text = "Интересует ли вас вакансия? Когда сможете созвониться?"
+    assert policy.classify_employer_text(text) == "interview"
+
+
+def test_short_interest_ack_can_be_auto_sent_even_if_model_overreviews():
+    decision = policy.evaluate_reply_decision(
+        {
+            "answer": "Добрый день! Да, предложение интересно. Готов обсудить подробнее.",
+            "action": "review", "confidence": 0.60, "category": "interest",
+            "evidence": [], "missing_facts": ["details"], "reason": "need details",
+        },
+        employer_text="Интересует ли вас наше предложение?",
+        trusted_context="",
+    )
+    assert decision.category == "interest"
+    assert decision.action == "send"
+    assert decision.auto_send_allowed is True
+    assert decision.missing_facts == []
+
+
+def test_interest_template_ignores_decline_reason_examples():
+    text = (
+        "Добрый день! Интересует ли вас наше предложение?\n"
+        "В случае отказа, не могли бы вы поделиться причиной (например: не мой стек, нашел работу, не подошел график)."
+    )
+    assert policy.classify_employer_text(text) == "interest"
+
+
+def test_positive_interest_ack_overrides_contradictory_model_skip():
+    decision = policy.evaluate_reply_decision(
+        {
+            "answer": "Добрый день! Да, предложение интересно.", "action": "skip",
+            "confidence": 0.2, "category": "interest", "evidence": [],
+            "missing_facts": [], "reason": "uncertain",
+        },
+        employer_text="Интересует ли вас наше предложение?", trusted_context="",
+    )
+    assert decision.action == "send"
+    assert decision.auto_send_allowed is True
+
+
+def test_interest_ack_does_not_bypass_work_format_safety():
+    decision = policy.evaluate_reply_decision(
+        {
+            "answer": "Да, предложение интересно, но рассматриваю только удалённую работу.",
+            "action": "send", "confidence": 0.99, "category": "interest",
+            "evidence": [], "missing_facts": [], "reason": "",
+        },
+        employer_text="Интересует ли вас наше предложение?", trusted_context="",
+    )
+    assert decision.auto_send_allowed is False
+
+
+def test_rewrite_llm_draft_keeps_manual_rewrite_short_and_fact_preserving(monkeypatch):
+    profile = {
+        "name": "DeepSeek", "api_key": "x", "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash", "enabled": True,
+    }
+    captured = {}
+    monkeypatch.setattr(llm, "_enabled_profiles", lambda _config: [profile])
+
+    def fake_complete(_profile, messages, **kwargs):
+        captured["system"] = messages[0]["content"]
+        return LLMResult(
+            text="Именно с УТ 8.3 напрямую не работал. Есть общий опыт разработки на 1С 8.3.",
+            provider="deepseek", profile="DeepSeek", model="deepseek-v4-flash",
+            protocol="openai_compatible", latency_ms=8,
+        )
+
+    monkeypatch.setattr(llm, "_complete_chat", fake_complete)
+    result = llm.rewrite_llm_draft(
+        "В моем опыте нет работы именно с конфигурацией 1С:УТ 8.3. Есть общий опыт разработки на 1С 8.3.",
+        account_key="rewrite-test",
+    )
+    assert result.startswith("Именно с УТ 8.3")
+    assert "Do not add dates, numbers, technologies" in captured["system"]
+    assert "Preserve the factual meaning and uncertainty" in captured["system"]
+
+
+def test_naturalize_review_draft_removes_resume_meta_language():
+    source = (
+        "В резюме нет опыта работы именно с конфигурацией 1С:УТ 8.3, "
+        "поэтому точно ответить на этот вопрос не могу."
+    )
+    assert llm._naturalize_review_draft(source) == "Именно с 1С:УТ 8.3 напрямую не работал."
+
+
+def test_rewrite_rejects_resume_meta_and_uses_deterministic_fallback(monkeypatch):
+    profile = {"name": "DeepSeek", "api_key": "x", "enabled": True}
+    monkeypatch.setattr(llm, "_enabled_profiles", lambda _config: [profile])
+    monkeypatch.setattr(
+        llm, "_complete_chat",
+        lambda *a, **k: LLMResult(
+            text="В резюме нет опыта работы именно с конфигурацией 1С:УТ 8.3.",
+            provider="deepseek", profile="DeepSeek", model="deepseek-v4-flash",
+            protocol="openai_compatible", latency_ms=5,
+        ),
+    )
+    result = llm.rewrite_llm_draft(
+        "В резюме нет опыта работы именно с конфигурацией 1С:УТ 8.3, поэтому точно ответить на этот вопрос не могу.",
+        account_key="rewrite-meta-fallback",
+    )
+    assert result == "Именно с 1С:УТ 8.3 напрямую не работал."
+
+
+def test_rewrite_naturalizes_model_bureaucratic_experience_answer(monkeypatch):
+    profile = {"name": "DeepSeek", "api_key": "x", "enabled": True}
+    monkeypatch.setattr(llm, "_enabled_profiles", lambda _config: [profile])
+    monkeypatch.setattr(
+        llm, "_complete_chat",
+        lambda *a, **k: LLMResult(
+            text="Опыта работы именно с конфигурацией 1С:УТ 8.3 нет, поэтому точно ответить на этот вопрос не могу.",
+            provider="deepseek", profile="DeepSeek", model="deepseek-v4-flash",
+            protocol="openai_compatible", latency_ms=5,
+        ),
+    )
+    result = llm.rewrite_llm_draft(
+        "В резюме нет опыта работы именно с конфигурацией 1С:УТ 8.3, поэтому точно ответить на этот вопрос не могу.",
+        account_key="rewrite-naturalize-model",
+    )
+    assert result == "Именно с 1С:УТ 8.3 напрямую не работал."

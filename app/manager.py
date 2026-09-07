@@ -223,6 +223,7 @@ def _human_llm_reason(reason: str) -> str:
         "factual first-person claim lacks trusted evidence": "для ответа не хватает подтверждённых фактов",
         "factual first-person claim is not sufficiently grounded in trusted facts": "ответ недостаточно подтверждён данными кандидата",
         "generated text does not look like a direct answer": "ответ получился не по существу вопроса",
+        "interest reply contains extra conditions or commitments": "\u043e\u0442\u0432\u0435\u0442 \u043d\u0430 \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u0441\u043e\u0434\u0435\u0440\u0436\u0438\u0442 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0443\u0441\u043b\u043e\u0432\u0438\u044f \u0438\u043b\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u0441\u0442\u0432\u0430",
     }
     return known.get(value, value)
 

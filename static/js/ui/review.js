@@ -133,6 +133,45 @@
     area.remove();
   }
 
+  function replaceCachedRow(nextRow) {
+    if (!nextRow || !Array.isArray(cache.rows)) return;
+    var id = String(nextRow.neg_id || '');
+    cache.rows = cache.rows.map(function (row) {
+      return String(row.neg_id || '') === id ? nextRow : row;
+    });
+    cache.at = Date.now();
+  }
+
+  function regenerateDraft(row, button) {
+    var id = String(row && row.neg_id || '').trim();
+    if (!id || button.disabled) return;
+    var old = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Генерирую…';
+    button.removeAttribute('title');
+    fetch('/api/interviews/' + encodeURIComponent(id) + '/regenerate', { method: 'POST' })
+      .then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (body) {
+          if (!response.ok || body.ok === false) {
+            throw new Error(body.detail || body.error || ('HTTP ' + response.status));
+          }
+          return body;
+        });
+      })
+      .then(function (body) {
+        if (body.row) replaceCachedRow(body.row);
+        render();
+      })
+      .catch(function (error) {
+        button.disabled = false;
+        button.textContent = 'Ошибка';
+        button.title = String(error && error.message || error || 'Не удалось перегенерировать');
+        window.setTimeout(function () {
+          if (button.isConnected) button.textContent = old;
+        }, 2200);
+      });
+  }
+
   function metaChip(text, kind) {
     var chip = el('span', 'phase5-review-chip', text);
     if (kind) chip.setAttribute('data-kind', kind);
@@ -174,6 +213,11 @@
     }
 
     var actions = el('div', 'phase5-review-actions');
+    var regenerate = el('button', 'phase5-review-regenerate', 'Перегенерировать');
+    regenerate.type = 'button';
+    regenerate.setAttribute('data-testid', 'phase5-review-regenerate');
+    regenerate.addEventListener('click', function () { regenerateDraft(row, regenerate); });
+    actions.appendChild(regenerate);
     if (row.llm_reply) {
       var copy = el('button', 'phase5-review-copy', 'Копировать черновик');
       copy.type = 'button';

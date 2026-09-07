@@ -407,6 +407,70 @@ def generate_llm_cover_letter(vacancy_title: str = "", company: str = "",
     return ""
 
 
+def _naturalize_review_draft(source: str) -> str:
+    """Deterministic fallback for common meta-style review drafts."""
+    text = re.sub(r"\s+", " ", str(source or "")).strip()
+    patterns = (
+        r"^В резюме нет опыта работы именно с конфигурацией (?P<subject>[^,]+?)(?:,.*)?$",
+        r"^В мо[её]м опыте не было работы именно с конфигурацией (?P<subject>.+?)\.(?:\s.*)?$",
+        r"^Опыта работы именно с конфигурацией (?P<subject>[^,]+?) нет(?:,.*)?$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, text, flags=re.I)
+        if match:
+            subject = match.group("subject").strip(" ,.;:-")
+            return f"Именно с {subject} напрямую не работал."
+    return ""
+
+
+def rewrite_llm_draft(draft: str, account_key: str = "") -> str:
+    """Rewrite an existing reply for manual review without inventing new facts."""
+    source = re.sub(r"\s+", " ", str(draft or "")).strip()[:1800]
+    if len(source) < 10:
+        return ""
+    profiles = _enabled_profiles(CONFIG)
+    if not profiles:
+        return ""
+    system = (
+        "Rewrite an existing job-candidate reply draft so it sounds natural and concise. "
+        "Return only the rewritten reply, no markdown or explanation. Use the same language as the draft. "
+        "Use 1-3 short sentences, usually under 350 characters. Preserve the factual meaning and uncertainty. "
+        "Do not add dates, numbers, technologies, experience, preferences, commitments, or questions that are not "
+        "already present. Do not mention a resume, evidence, policy, AI, candidate, or applicant. "
+        "Avoid bureaucratic self-analysis such as 'in my experience there is no...' or talking about what the resume contains. "
+        "When the source draft may be inferring a lack of experience from missing information, preserve uncertainty instead "
+        "of turning that absence into a categorical 'never worked with / never encountered' claim."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"<EXISTING_DRAFT>\n{source}\n</EXISTING_DRAFT>"},
+    ]
+    for i, profile in enumerate(profiles):
+        pname = _profile_name(profile) or f"profile {i}"
+        try:
+            result = _complete_chat(profile, messages, max_tokens=420, temperature=0.25)
+            text = re.sub(r"^```(?:text)?\s*|\s*```$", "", (result.text or "").strip(), flags=re.I).strip()
+            text = re.sub(r"\s+", " ", text)
+            naturalized = _naturalize_review_draft(text)
+            if naturalized:
+                text = naturalized
+            meta_markers = ("резюме", "кандидат", "соискатель", "resume", "candidate", "applicant", "policy", "evidence")
+            if (len(text) < 10 or len(text) > 700 or _looks_like_invalid_reply(text)
+                    or any(marker in text.casefold() for marker in meta_markers)):
+                continue
+            _track_usage(account_key, "reply")
+            _set_llm_last_status(account_key, "reply_rewrite", result.provider, "ok", f"{len(text)} chars")
+            return text
+        except Exception as exc:
+            error_detail = _safe_exception_detail(exc)
+            log_debug(f"rewrite_llm_draft {pname} error: {error_detail}")
+            _set_llm_last_status(account_key, "reply_rewrite", _provider_name(profile), "error", error_detail)
+    fallback = _naturalize_review_draft(source)
+    if fallback:
+        _set_llm_last_status(account_key, "reply_rewrite", "deterministic", "ok", f"{len(fallback)} chars")
+    return fallback
+
+
 def _reply_response_format(profile: dict) -> dict | None:
     caps = _provider_capabilities(profile)
     if caps.json_schema:
@@ -462,6 +526,17 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
         "always use action=review even when you can draft a useful answer. "
         "If the newest employer message is only a reminder about an earlier question, answer the latest unanswered "
         "employer question visible in the conversation. If that earlier question is not visible, do not invent it."
+        "\n\nSTYLE AND DIALOGUE RULES: Write like the candidate himself, never like an assistant analysing a candidate. "
+        "Default to 1-3 short sentences and usually under 350 characters. Answer only the employer's current question "
+        "or request; do not start a new interview, do not ask extra questions unless an answer is impossible without one. "
+        "Never refer to the candidate in third person and avoid phrases like 'the candidate', 'соискатель', 'кандидат', "
+        "'в моем резюме указано', 'в моём резюме указано', 'в резюме не указано'. Use first-person natural wording instead. "
+        "Do not explain your evidence or safety reasoning to the employer. If a fact is missing, keep the draft natural and "
+        "brief, put the missing fact in missing_facts, and use action=review. For a simple interest/invitation question such "
+        "as 'Интересует ли вас наше предложение?', answer the interest question directly and briefly; do not invent concerns, "
+        "conditions, interview times, or follow-up questions that the employer did not ask. Use category=interest for these. "
+        "For a pure interest/invitation question, use action=send, high confidence, evidence=[], and missing_facts=[] when the "
+        "draft only acknowledges interest and does not add factual claims or commitments."
     )
     if resume_text and resume_text.strip():
         system += f"\n\n<TRUSTED_CANDIDATE_RESUME>\n{resume_text.strip()[:6500]}\n</TRUSTED_CANDIDATE_RESUME>"
@@ -486,7 +561,11 @@ def generate_llm_reply_decision(conversation: list, employer_name: str = "", cov
             messages.append({"role": "user", "content": f"<UNTRUSTED_EMPLOYER_MESSAGE>\n{raw}\n</UNTRUSTED_EMPLOYER_MESSAGE>"})
         else:
             messages.append({"role": "assistant", "content": raw})
-    employer_text = "\n".join(employer_parts[-3:])
+    latest_employer_text = employer_parts[-1] if employer_parts else ""
+    if is_reminder_message(latest_employer_text):
+        employer_text = latest_unanswered_employer_question(conversation) or latest_employer_text
+    else:
+        employer_text = latest_employer_text
 
     if not profiles:
         if getattr(CONFIG, "llm_openclaw_enabled", False):
