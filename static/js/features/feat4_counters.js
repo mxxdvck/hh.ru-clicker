@@ -3,8 +3,8 @@
 // Данные: GET /api/account/<idx>/counters_v2 для каждого НЕ-temp аккаунта
 // из snapshot'а. Суммы показываются как «💬 N · 📮 N · 👁️ N · 🔔 N».
 //
-// Автообновление через WebSocket: оборачиваем window.renderHeader(snap) —
-// каждый WS-snapshot является триггером, но реальный fetch делается не чаще
+// Автообновление через публичный Phase 5 event `hh:snapshot`.
+// Каждый WS-snapshot является триггером, но реальный fetch делается не чаще
 // раза в 60 секунд (троттлинг по Date.now); первый раз — сразу.
 //
 // Загружается ПОСЛЕ app.js. Использует глобалы: esc, State.
@@ -14,7 +14,7 @@
 (function () {
   'use strict';
 
-  // Guard от двойной загрузки / двойного оборачивания.
+  // Guard от двойной загрузки.
   if (window.__feat4CountersInstalled) return;
   window.__feat4CountersInstalled = true;
 
@@ -139,32 +139,19 @@
     refresh(snap || (window.State && State.lastSnapshot) || {});
   }
 
-  // ── Обёртка window.renderHeader ────────────────────────────────────────
-  function wrapRenderHeader() {
-    const orig = window.renderHeader;
-    if (typeof orig !== 'function' || orig.__feat4Wrapped) return;
-    const wrapped = function (snap) {
-      const res = orig.apply(this, arguments); // оригинал не блокируем
-      try {
-        maybeRefresh(snap);
-      } catch (e) {
-        console.debug('feat4-counters:', e);
-      }
-      return res;
-    };
-    wrapped.__feat4Wrapped = true;
-    window.renderHeader = wrapped;
-  }
-
-  // Скрипт идёт после app.js — renderHeader уже объявлен, оборачиваем сразу,
-  // чтобы не пропустить первый snapshot.
-  if (typeof window.renderHeader === 'function') wrapRenderHeader();
+  // Phase 5 event bridge replaces the old renderHeader monkey-patch.
+  window.addEventListener('hh:snapshot', function (event) {
+    try {
+      maybeRefresh(event && event.detail && event.detail.snapshot);
+    } catch (e) {
+      console.debug('feat4-counters:', e);
+    }
+  });
 
   document.addEventListener('DOMContentLoaded', () => {
     injectCss();
     ensureEl();
-    wrapRenderHeader(); // на случай если app.js зарегистрировал функцию позже
-    // Если первый snapshot уже пришёл до нашего DOMContentLoaded — догоняем.
+    // If a snapshot arrived before the Phase 5 event bridge loaded, catch up once.
     if (window.State && State.lastSnapshot) maybeRefresh(State.lastSnapshot);
   });
 })();

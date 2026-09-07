@@ -1,10 +1,9 @@
 /*
- * Feature 8: WebSocket toggle — точка-индикатор коннекта и глобальный чекбокс.
- * Все классы с префиксом feat8-. Подключается после static/css/style.css;
- * использует CSS-переменные темы с fallback'ами.
+ * Feature 8: WebSocket toggle + Project Phase 5A accessibility baseline.
+ * Loaded after the main theme so these rules can safely harden focus/motion
+ * without changing the existing layout or business UI selectors.
  */
 
-/* Точка-индикатор рядом с бейджем статуса (#ws-badge-<idx>) */
 .feat8-dot {
   display: inline-block;
   font-size: 12px;
@@ -15,27 +14,11 @@
   pointer-events: none;
 }
 
-/* connected */
-.feat8-dot-connected {
-  color: var(--green, #2ecc71);
-}
+.feat8-dot-connected { color: var(--green, #2ecc71); }
+.feat8-dot-pending { color: var(--yellow, #f1c40f); }
+.feat8-dot-error { color: var(--red, #e74c3c); }
+.feat8-dot-off { color: var(--dim, #8a8f98); }
 
-/* connecting / reconnecting */
-.feat8-dot-pending {
-  color: var(--yellow, #f1c40f);
-}
-
-/* error / no_token */
-.feat8-dot-error {
-  color: var(--red, #e74c3c);
-}
-
-/* disabled / disabled_global / неизвестно */
-.feat8-dot-off {
-  color: var(--dim, #8a8f98);
-}
-
-/* Глобальный чекбокс use_websocket_realtime в #ws-realtime-section */
 .feat8-global-label {
   display: inline-flex;
   align-items: center;
@@ -53,4 +36,35 @@
 .feat8-global-hint {
   font-size: 11px;
   color: var(--dim, #8a8f98);
+}
+
+/* Phase 5A: visible keyboard focus. No geometry/layout changes. */
+html.phase5-a11y #tabs .tab:focus-visible,
+html.phase5-a11y button:focus-visible,
+html.phase5-a11y a:focus-visible,
+html.phase5-a11y input:focus-visible,
+html.phase5-a11y select:focus-visible,
+html.phase5-a11y textarea:focus-visible,
+html.phase5-a11y summary:focus-visible,
+html.phase5-a11y [role="button"]:focus-visible {
+  outline: 2px solid var(--cyan, #39d0d8);
+  outline-offset: 2px;
+}
+
+/* Phase 5A: respect OS/browser reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  html.phase5-a11y *,
+  html.phase5-a11y *::before,
+  html.phase5-a11y *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  html.phase5-a11y body::after,
+  html.phase5-a11y #conn-dot.connected,
+  html.phase5-a11y #pause-btn.paused {
+    animation: none !important;
+  }
 }

@@ -56,6 +56,9 @@ class AccountState:
         # Per-cycle search pipeline counters shown in Dashboard search-only mode.
         self.filter_stats = {}
         self._apply_search_results_requested = False
+        # None means the whole current safe-search queue. A list is an explicit
+        # user-approved subset, validated server-side against vacancies_queue.
+        self._apply_search_results_ids = None
 
         self.limit_exceeded = False
         self.limit_reset_time = None
