@@ -33,6 +33,29 @@ class _Bot:
         self.paused = False
         self.account_states = []
         self.temp_states = {}
+        self.applied_calls = []
+
+    def toggle_pause(self):
+        self.paused = not self.paused
+
+    def toggle_account_pause(self, idx):
+        state = self.account_states[idx]
+        state.paused = not state.paused
+        state.paused_reason = "manual" if state.paused else ""
+
+    def apply_search_results(self, idx, vacancy_ids=None):
+        state = self.account_states[idx]
+        queue = [str(value) for value in state.vacancies_queue]
+        requested = [str(value) for value in (vacancy_ids or [])]
+        if not state.paused or state.paused_reason != "search_only" or not requested:
+            return False
+        if any(value not in queue for value in requested):
+            return False
+        self.applied_calls.append((idx, requested))
+        state.paused = False
+        state.paused_reason = ""
+        state.status = "applying"
+        return True
 
 
 def _state(**overrides):
@@ -62,6 +85,15 @@ def _update(chat_id=100, *, chat_type="private", text="/status"):
             "text": text,
         },
     }
+
+
+def _last_text(session):
+    return session.calls[-1][1]["text"]
+
+
+def _confirmation_token(text):
+    tail = text.split("/confirm ", 1)[1]
+    return tail.split()[0]
 
 
 def test_parse_allowed_chat_ids_is_strict_and_deduplicates():
@@ -131,17 +163,137 @@ def test_accounts_command_includes_safe_runtime_summary():
     remote = TelegramRemote(bot, "123:secret", {100}, session=session)
 
     assert remote.process_update(_update(text="/accounts")) is True
-    text = session.calls[0][1]["text"]
+    text = _last_text(session)
     assert "#0 one: applying" in text
     assert "#1 two: paused · manual" in text
     assert "⛔" in text
+
+
+def test_global_pause_requires_one_time_confirmation():
+    bot = _Bot()
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+
+    remote.process_update(_update(text="/pause"))
+    assert bot.paused is False
+    token = _confirmation_token(_last_text(session))
+
+    remote.process_update(_update(text=f"/confirm {token}"))
+    assert bot.paused is True
+    assert "✅" in _last_text(session)
+
+    remote.process_update(_update(text=f"/confirm {token}"))
+    assert bot.paused is True
+    assert "Нет ожидающего действия" in _last_text(session)
+
+
+def test_wrong_confirmation_code_does_not_mutate():
+    bot = _Bot()
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+    remote.process_update(_update(text="/pause"))
+
+    remote.process_update(_update(text="/confirm deadbeef"))
+    assert bot.paused is False
+    assert "Неверный код" in _last_text(session)
+
+
+def test_account_confirmation_is_target_state_not_blind_toggle():
+    bot = _Bot()
+    state = _state(short="one")
+    bot.account_states = [state]
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+
+    remote.process_update(_update(text="/account 0 pause"))
+    token = _confirmation_token(_last_text(session))
+    # Simulate dashboard changing the state before Telegram confirmation arrives.
+    state.paused = True
+    state.paused_reason = "manual"
+    remote.process_update(_update(text=f"/confirm {token}"))
+
+    assert state.paused is True
+    assert "повторный toggle не нужен" in _last_text(session)
+
+
+def test_apply_queue_captures_exact_ids_and_uses_existing_safe_flow(monkeypatch):
+    from app.config import CONFIG
+
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    bot = _Bot()
+    state = _state(
+        short="one",
+        status="search_only",
+        paused=True,
+        paused_reason="search_only",
+        vacancies_queue=["11", "22", "33"],
+    )
+    bot.account_states = [state]
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+
+    remote.process_update(_update(text="/apply_queue 0"))
+    token = _confirmation_token(_last_text(session))
+    remote.process_update(_update(text=f"/confirm {token}"))
+
+    assert bot.applied_calls == [(0, ["11", "22", "33"])]
+    assert state.status == "applying"
+
+
+def test_apply_subset_rejects_id_outside_current_safe_queue(monkeypatch):
+    from app.config import CONFIG
+
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    bot = _Bot()
+    bot.account_states = [
+        _state(paused=True, paused_reason="search_only", vacancies_queue=["11", "22"])
+    ]
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+
+    remote.process_update(_update(text="/apply 0 11 999"))
+    assert bot.applied_calls == []
+    assert "999" in _last_text(session)
+    assert "/confirm" not in _last_text(session)
+
+
+def test_apply_confirmation_fails_if_queue_changed(monkeypatch):
+    from app.config import CONFIG
+
+    monkeypatch.setattr(CONFIG, "search_only_mode", True)
+    bot = _Bot()
+    state = _state(paused=True, paused_reason="search_only", vacancies_queue=["11", "22"])
+    bot.account_states = [state]
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+
+    remote.process_update(_update(text="/apply_queue 0"))
+    token = _confirmation_token(_last_text(session))
+    state.vacancies_queue = ["11"]
+    remote.process_update(_update(text=f"/confirm {token}"))
+
+    assert bot.applied_calls == []
+    assert "отклонено сервером" in _last_text(session)
+
+
+def test_cancel_consumes_pending_action():
+    bot = _Bot()
+    session = _Session()
+    remote = TelegramRemote(bot, "123:secret", {100}, session=session)
+    remote.process_update(_update(text="/pause"))
+    token = _confirmation_token(_last_text(session))
+
+    remote.process_update(_update(text="/cancel"))
+    remote.process_update(_update(text=f"/confirm {token}"))
+    assert bot.paused is False
+    assert "Нет ожидающего действия" in _last_text(session)
 
 
 def test_unknown_command_does_not_expose_configuration():
     session = _Session()
     remote = TelegramRemote(_Bot(), "123:super-secret-token", {100}, session=session)
     assert remote.process_update(_update(text="/something")) is True
-    text = session.calls[0][1]["text"]
+    text = _last_text(session)
     assert "super-secret-token" not in text
     assert "Неизвестная команда" in text
 

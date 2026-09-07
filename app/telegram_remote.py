@@ -1,8 +1,8 @@
-"""Project Phase 6: secure Telegram remote, read-only foundation.
+"""Project Phase 6: secure Telegram remote.
 
-The remote deliberately starts with observability only. Mutating commands are added
-in later Phase 6 slices and must call existing BotManager operations so Telegram
-never becomes a second, less-safe application engine.
+Telegram is a thin remote UI over the existing BotManager. It must never become a
+second application engine or bypass Phase 1-5 safety, quota, questionnaire or LLM
+policy decisions.
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ from __future__ import annotations
 from contextlib import nullcontext
 import json
 import os
+import secrets
 import threading
+import time
 from typing import Any
 
 import requests
@@ -23,6 +25,7 @@ _ENV_ENABLED = "HH_BOT_TELEGRAM_ENABLED"
 _ENV_TOKEN = "HH_BOT_TELEGRAM_TOKEN"
 _ENV_ALLOWED_CHAT_IDS = "HH_BOT_TELEGRAM_ALLOWED_CHAT_IDS"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_CONFIRM_TTL_SECONDS = 90.0
 
 
 def _env_truthy(value: str | None) -> bool:
@@ -61,7 +64,7 @@ def _effective_daily_limit() -> int:
 
 
 class TelegramRemote:
-    """Small Bot API long-polling client with an explicit private-chat allowlist."""
+    """Small Bot API long-polling client with a private-chat allowlist."""
 
     def __init__(
         self,
@@ -88,10 +91,12 @@ class TelegramRemote:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._offset = 0
+        self._pending_lock = threading.Lock()
+        self._pending_actions: dict[int, dict[str, Any]] = {}
 
     @classmethod
     def from_env(cls, bot: Any) -> TelegramRemote | None:
-        """Build only after an explicit opt-in. Misconfiguration disables remote fail-closed."""
+        """Build only after explicit opt-in. Misconfiguration disables remote fail-closed."""
         if not _env_truthy(os.environ.get(_ENV_ENABLED)):
             return None
 
@@ -129,6 +134,8 @@ class TelegramRemote:
 
     def stop(self) -> None:
         self._stop_event.set()
+        with self._pending_lock:
+            self._pending_actions.clear()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
@@ -205,13 +212,30 @@ class TelegramRemote:
         text = str(message.get("text") or "").strip()
         if not text.startswith("/"):
             return False
-        command = text.split(None, 1)[0].split("@", 1)[0].lower()
+        parts = text.split()
+        command = parts[0].split("@", 1)[0].lower()
+        args = parts[1:]
+
         if command in ("/start", "/help"):
             reply = self._help_text()
         elif command == "/status":
             reply = self._status_text()
         elif command == "/accounts":
             reply = self._accounts_text()
+        elif command == "/pause":
+            reply = self._prepare_global_pause(chat_id, True)
+        elif command == "/resume":
+            reply = self._prepare_global_pause(chat_id, False)
+        elif command == "/account":
+            reply = self._prepare_account_pause(chat_id, args)
+        elif command == "/apply_queue":
+            reply = self._prepare_apply(chat_id, args, exact_subset=False)
+        elif command == "/apply":
+            reply = self._prepare_apply(chat_id, args, exact_subset=True)
+        elif command == "/confirm":
+            reply = self._confirm(chat_id, args)
+        elif command == "/cancel":
+            reply = self._cancel(chat_id)
         else:
             reply = "Неизвестная команда. /help покажет доступные команды."
         self._send_message(chat_id, reply)
@@ -243,6 +267,17 @@ class TelegramRemote:
                 result.append((public_idx, state))
         return result
 
+    def _state_for_index(self, idx: int) -> Any | None:
+        if idx < 0:
+            return None
+        regular = list(getattr(self.bot, "account_states", []) or [])
+        if idx < len(regular):
+            return regular[idx]
+        temp_states = getattr(self.bot, "temp_states", {}) or {}
+        if not isinstance(temp_states, dict):
+            return None
+        return temp_states.get(idx - len(regular))
+
     @staticmethod
     def _state_view(idx: int, state: Any) -> dict[str, Any]:
         lock = getattr(state, "_state_lock", None)
@@ -269,12 +304,17 @@ class TelegramRemote:
     @staticmethod
     def _help_text() -> str:
         return (
-            "HH Bot · Telegram remote\n"
-            "Phase 6A работает только на чтение.\n\n"
+            "HH Bot · Telegram remote\n\n"
             "/status - общий статус\n"
             "/accounts - состояния аккаунтов\n"
+            "/pause | /resume - глобальная пауза\n"
+            "/account <idx> pause|resume - пауза аккаунта\n"
+            "/apply_queue <idx> - текущая safe-search очередь\n"
+            "/apply <idx> <vacancy_id...> - точный поднабор safe-search\n"
+            "/confirm <код> - подтвердить изменение\n"
+            "/cancel - отменить ожидающее изменение\n"
             "/help - эта справка\n\n"
-            "Команды, меняющие состояние, появятся отдельным этапом после safety-тестов."
+            "Любое изменение состояния требует одноразового подтверждения. Force/bypass команд нет."
         )
 
     def _status_text(self) -> str:
@@ -314,3 +354,182 @@ class TelegramRemote:
                 f"   сегодня {daily} · запуск {item['sent']} · очередь {item['queue']}"
             )
         return "\n".join(lines)[:3900]
+
+    def _store_pending(self, chat_id: int, action: dict[str, Any], label: str) -> str:
+        token = secrets.token_hex(4)
+        pending = dict(action)
+        pending["token"] = token
+        pending["expires_at"] = time.monotonic() + _CONFIRM_TTL_SECONDS
+        pending["label"] = label
+        with self._pending_lock:
+            # One pending action per authorized chat. A new request replaces the old one.
+            self._pending_actions[chat_id] = pending
+        return (
+            f"Подтвердить: {label}\n"
+            f"/confirm {token}\n"
+            "Код одноразовый и действует 90 секунд. /cancel отменит действие."
+        )
+
+    def _prepare_global_pause(self, chat_id: int, paused: bool) -> str:
+        current = bool(getattr(self.bot, "paused", False))
+        if current == paused:
+            return "Глобальная пауза уже включена." if paused else "Бот уже продолжает работу."
+        label = "поставить весь бот на паузу" if paused else "снять глобальную паузу"
+        return self._store_pending(chat_id, {"kind": "global_pause", "paused": paused}, label)
+
+    def _prepare_account_pause(self, chat_id: int, args: list[str]) -> str:
+        if len(args) != 2:
+            return "Формат: /account <idx> pause|resume"
+        try:
+            idx = int(args[0])
+        except ValueError:
+            return "idx должен быть целым числом."
+        desired_text = args[1].strip().lower()
+        if desired_text not in ("pause", "resume"):
+            return "Формат: /account <idx> pause|resume"
+        state = self._state_for_index(idx)
+        if state is None:
+            return "Аккаунт с таким idx не найден."
+        paused = desired_text == "pause"
+        view = self._state_view(idx, state)
+        if bool(view["paused"]) == paused:
+            return f"Аккаунт #{idx} уже {'на паузе' if paused else 'работает'}."
+        label = f"{'поставить' if paused else 'возобновить'} аккаунт #{idx} {view['short']}"
+        return self._store_pending(
+            chat_id,
+            {"kind": "account_pause", "idx": idx, "paused": paused},
+            label,
+        )
+
+    def _safe_queue_snapshot(self, idx: int) -> tuple[Any | None, tuple[str, ...], str]:
+        state = self._state_for_index(idx)
+        if state is None:
+            return None, (), ""
+        lock = getattr(state, "_state_lock", None)
+        context = lock if lock is not None else nullcontext()
+        with context:
+            queue = tuple(str(value).strip() for value in (getattr(state, "vacancies_queue", []) or []))
+            queue = tuple(value for value in queue if value)
+            reason = str(getattr(state, "paused_reason", "") or "")
+            paused = bool(getattr(state, "paused", False))
+        if not paused:
+            reason = ""
+        return state, queue, reason
+
+    def _prepare_apply(self, chat_id: int, args: list[str], *, exact_subset: bool) -> str:
+        if not args:
+            return (
+                "Формат: /apply <idx> <vacancy_id...>"
+                if exact_subset
+                else "Формат: /apply_queue <idx>"
+            )
+        try:
+            idx = int(args[0])
+        except ValueError:
+            return "idx должен быть целым числом."
+        if not bool(getattr(CONFIG, "search_only_mode", False)):
+            return "Safe-search режим сейчас выключен; Telegram не запускает прямой apply."
+        state, queue, pause_reason = self._safe_queue_snapshot(idx)
+        if state is None:
+            return "Аккаунт с таким idx не найден."
+        if pause_reason != "search_only" or not queue:
+            return "Для аккаунта нет текущей подтверждаемой safe-search очереди."
+
+        selected = queue
+        if exact_subset:
+            raw_ids: list[str] = []
+            for raw in args[1:]:
+                raw_ids.extend(part.strip() for part in raw.split(",") if part.strip())
+            if not raw_ids:
+                return "Формат: /apply <idx> <vacancy_id...>"
+            queue_set = set(queue)
+            selected_list: list[str] = []
+            seen: set[str] = set()
+            for vacancy_id in raw_ids:
+                if vacancy_id in seen:
+                    continue
+                if vacancy_id not in queue_set:
+                    return f"Вакансия {vacancy_id} не входит в текущую safe-search очередь."
+                seen.add(vacancy_id)
+                selected_list.append(vacancy_id)
+            selected = tuple(selected_list)
+
+        view = self._state_view(idx, state)
+        label = f"откликнуться на {len(selected)} вакансий из safe-search для #{idx} {view['short']}"
+        # Capture the exact ids now. apply_search_results validates the same ids again at confirm time.
+        return self._store_pending(
+            chat_id,
+            {"kind": "apply", "idx": idx, "vacancy_ids": selected},
+            label,
+        )
+
+    def _cancel(self, chat_id: int) -> str:
+        with self._pending_lock:
+            existed = self._pending_actions.pop(chat_id, None) is not None
+        return "Ожидающее действие отменено." if existed else "Нет действия для отмены."
+
+    def _confirm(self, chat_id: int, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Формат: /confirm <код>"
+        supplied = str(args[0]).strip()
+        with self._pending_lock:
+            pending = self._pending_actions.get(chat_id)
+            if pending is None:
+                return "Нет ожидающего действия."
+            if float(pending.get("expires_at", 0.0)) < time.monotonic():
+                self._pending_actions.pop(chat_id, None)
+                return "Код подтверждения истёк. Повтори исходную команду."
+            expected = str(pending.get("token") or "")
+            if not supplied or not secrets.compare_digest(supplied, expected):
+                return "Неверный код подтверждения."
+            # Consume before execution: confirmation is one-shot even if the operation fails.
+            pending = self._pending_actions.pop(chat_id)
+        return self._execute_pending(pending)
+
+    def _execute_pending(self, action: dict[str, Any]) -> str:
+        kind = str(action.get("kind") or "")
+        if kind == "global_pause":
+            desired = bool(action.get("paused"))
+            current = bool(getattr(self.bot, "paused", False))
+            if current == desired:
+                return "Состояние уже изменилось, повторный toggle не нужен."
+            self.bot.toggle_pause()
+            if bool(getattr(self.bot, "paused", False)) != desired:
+                return "Не удалось подтвердить новое глобальное состояние."
+            return "✅ Глобальная пауза включена." if desired else "✅ Глобальная пауза снята."
+
+        if kind == "account_pause":
+            try:
+                idx = int(action.get("idx"))
+            except (TypeError, ValueError):
+                return "Действие отклонено: некорректный idx."
+            desired = bool(action.get("paused"))
+            state = self._state_for_index(idx)
+            if state is None:
+                return "Действие отклонено: аккаунт больше не существует."
+            current = bool(self._state_view(idx, state)["paused"])
+            if current == desired:
+                return "Состояние аккаунта уже изменилось, повторный toggle не нужен."
+            self.bot.toggle_account_pause(idx)
+            state = self._state_for_index(idx)
+            if state is None or bool(self._state_view(idx, state)["paused"]) != desired:
+                return "Не удалось подтвердить новое состояние аккаунта."
+            return f"✅ Аккаунт #{idx} {'на паузе' if desired else 'возобновлён'}."
+
+        if kind == "apply":
+            try:
+                idx = int(action.get("idx"))
+            except (TypeError, ValueError):
+                return "Действие отклонено: некорректный idx."
+            vacancy_ids = [str(value) for value in (action.get("vacancy_ids") or ()) if str(value)]
+            if not vacancy_ids:
+                return "Действие отклонено: подтверждённый список пуст."
+            ok = bool(self.bot.apply_search_results(idx, vacancy_ids=vacancy_ids))
+            if not ok:
+                return (
+                    "Действие отклонено сервером. Safe-search очередь могла измениться, "
+                    "аккаунт мог выйти из search_only или список больше не валиден."
+                )
+            return f"✅ Подтверждено {len(vacancy_ids)} вакансий. Запущен существующий safe apply-flow."
+
+        return "Действие отклонено: неизвестный тип операции."
