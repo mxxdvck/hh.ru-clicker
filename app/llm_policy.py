@@ -39,6 +39,11 @@ _SECRET_OUTPUT_PATTERNS = (
 )
 
 _CATEGORY_MARKERS = {
+    "interest": (
+        "are you interested", "interested in our offer", "is this opportunity relevant",
+        "интересует ли вас", "интересно ли вам", "актуально ли", "готовы рассмотреть",
+        "готовы обсудить предложение", "предложение интересно",
+    ),
     "salary": ("salary", "compensation", "pay range", "\u0437\u0430\u0440\u043f\u043b\u0430\u0442", "\u043e\u043a\u043b\u0430\u0434", "\u0434\u043e\u0445\u043e\u0434", "\u0432\u0438\u043b\u043a\u0430"),
     "relocation": ("relocat", "move to", "\u043f\u0435\u0440\u0435\u0435\u0437\u0434", "\u0440\u0435\u043b\u043e\u043a\u0430\u0446", "\u043a\u043e\u043c\u0430\u043d\u0434\u0438\u0440\u043e\u0432", "business trip"),
     "interview": ("interview", "phone call", "video call", "google meet", "zoom", "teams call", "\u0441\u043e\u0431\u0435\u0441\u0435\u0434", "\u0441\u043e\u0437\u0432\u043e\u043d", "\u0437\u0432\u043e\u043d\u043e\u043a", "\u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e", "\u0432\u0441\u0442\u0440\u0435\u0447\u0430 \u0441 \u0440\u0435\u043a\u0440\u0443\u0442"),
@@ -75,6 +80,69 @@ _TIMEZONE_MARKERS = ("timezone", "time zone", "мск", "часов")
 _WORK_FORMAT_MARKERS = ("office", "remote", "hybrid", "офис", "удален", "гибрид")
 _SCHEDULE_MARKERS = ("schedule", "shift", "график", "смен")
 
+_TERMINAL_NOTICE_PATTERNS = (
+    r"ваши ответы (?:успешно )?(?:отправлены|переданы) работодателю",
+    r"ответы (?:успешно )?(?:отправлены|переданы) работодателю",
+    r"если ваш отклик .* заинтересует",
+    r"благодарю вас за время и ответы.*рассмотрим .*резюме.*свяжемся",
+    r"рассмотрим .*резюме.*при положительном .*свяжемся",
+    r"спасибо за ответы.*(?:свяжемся|вернемся|вернёмся).*решени",
+    r"анкета (?:успешно )?(?:заполнена|завершена)",
+    r"опрос (?:успешно )?(?:заверш[её]н|пройден)",
+    r"your answers (?:have been )?sent to the employer",
+    r"answers (?:have been )?submitted to the employer",
+    r"questionnaire (?:is )?(?:complete|completed)",
+)
+
+_REMINDER_PATTERNS = (
+    r"напомина(?:ю|ем).*вопрос",
+    r"возвращаюсь.*(?:к|ко).*вопрос",
+    r"предыдущ(?:ий|его).*вопрос.*ответ",
+    r"remind(?:ing)?.*question",
+    r"follow(?:ing)? up.*question",
+)
+
+_QUESTION_TEXT_PATTERNS = (
+    r"\?", r"\bкогда\b", r"\bсколько\b", r"\bкако(?:й|я|е|ие)\b",
+    r"\bготов(?:ы|а)?\b", r"\bможете\b", r"\bвас устраивает\b",
+    r"\bрасскажите\b", r"\bопишите\b", r"\bподскажите\b",
+    r"\bwhat\b", r"\bwhen\b", r"\bhow\b", r"\bare you\b", r"\bcan you\b",
+)
+
+
+def is_non_actionable_employer_message(text: str) -> bool:
+    value = _norm(text)
+    return any(re.search(pattern, value, flags=re.I) for pattern in _TERMINAL_NOTICE_PATTERNS)
+
+
+def is_reminder_message(text: str) -> bool:
+    value = _norm(text)
+    return any(re.search(pattern, value, flags=re.I) for pattern in _REMINDER_PATTERNS)
+
+
+def latest_unanswered_employer_question(conversation: list | None) -> str:
+    messages = list(conversation or [])
+    last_employer = max((i for i, msg in enumerate(messages) if msg.get("sender") == "employer"), default=-1)
+    if last_employer <= 0:
+        return ""
+    for idx in range(last_employer - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("sender") != "employer":
+            continue
+        text = str(msg.get("text") or "").strip()
+        if not text or is_non_actionable_employer_message(text):
+            continue
+        if not any(re.search(pattern, text, flags=re.I) for pattern in _QUESTION_TEXT_PATTERNS):
+            continue
+        next_sender = next((
+            m.get("sender") for m in messages[idx + 1:last_employer]
+            if m.get("sender") in {"applicant", "employer"} and str(m.get("text") or "").strip()
+        ), "")
+        if next_sender == "applicant":
+            continue
+        return text
+    return ""
+
 
 @dataclass
 class ReplyDecision:
@@ -94,12 +162,25 @@ def prompt_injection_suspected(text: str) -> bool:
 
 
 def classify_employer_text(text: str) -> str:
-    value = str(text or "").casefold()
+    value = str(text or "").casefold().replace("\u0451", "\u0435")
     if prompt_injection_suspected(value):
         return "prompt_injection"
+    # Recruiter templates often append examples of why a candidate might decline,
+    # e.g. "не подошёл график". Those examples describe rejection reasons, not
+    # the current question, so they must not turn a simple interest check into schedule risk.
+    for marker in ("в случае отказа", "если предложение не подходит", "if you decline", "if not interested"):
+        if marker in value:
+            value = value.split(marker, 1)[0]
+    # Interest/invitation is intentionally checked last. A message like
+    # "Интересует вакансия? Когда сможете созвониться?" must remain interview,
+    # not become a safe interest acknowledgement just because it contains both.
     for category, markers in _CATEGORY_MARKERS.items():
+        if category == "interest":
+            continue
         if any(marker in value for marker in markers):
             return category
+    if any(marker in value for marker in _CATEGORY_MARKERS.get("interest", ())):
+        return "interest"
     return "general"
 
 
@@ -334,6 +415,34 @@ def _general_answer_needs_evidence(answer: str) -> bool:
     return any(re.search(pattern, value, flags=re.I) for pattern in patterns)
 
 
+def _safe_interest_acknowledgement(answer: str) -> bool:
+    value = _norm(answer)
+    if not value or len(str(answer or "")) > 450 or "?" in str(answer or ""):
+        return False
+    forbidden = (
+        "\u043a\u0430\u043d\u0434\u0438\u0434\u0430\u0442", "\u0441\u043e\u0438\u0441\u043a\u0430\u0442\u0435\u043b\u044c",
+        "\u0432 \u043c\u043e\u0435\u043c \u0440\u0435\u0437\u044e\u043c\u0435", "\u0432 \u043c\u043e\u0451\u043c \u0440\u0435\u0437\u044e\u043c\u0435", "\u0432 \u0440\u0435\u0437\u044e\u043c\u0435",
+        "\u043d\u0435\u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e", "\u043d\u0435\u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u043e", "not interested",
+    )
+    if any(marker in value for marker in forbidden):
+        return False
+    if re.search(r"(?<![\w])\u043d\u0435\s+(?:\u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e|\u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u043e)\b", value):
+        return False
+    if re.search(r"\d", value):
+        return False
+    # A pure acknowledgement must not smuggle in salary/work-format/schedule/interview
+    # commitments. Those categories have their own evidence/review gates.
+    answer_category = classify_employer_text(value)
+    if answer_category not in {"general", "interest"}:
+        return False
+    positive = (
+        "\u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e",
+        "\u043c\u043d\u0435 \u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e", "\u0438\u043d\u0442\u0435\u0440\u0435\u0441\u043d\u043e \u0443\u0437\u043d\u0430\u0442\u044c",
+        "\u0433\u043e\u0442\u043e\u0432 \u043e\u0431\u0441\u0443\u0434\u0438\u0442\u044c", "\u0433\u043e\u0442\u043e\u0432 \u0440\u0430\u0441\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c",
+        "\u0438\u043d\u0442\u0435\u0440\u0435\u0441\u0443\u0435\u0442", "interested", "happy to discuss", "would like to discuss",
+    )
+    return any(marker in value for marker in positive)
+
 def _safe_float(value) -> float:
     try:
         return max(0.0, min(float(value), 1.0))
@@ -376,6 +485,19 @@ def evaluate_reply_decision(data: dict, *, employer_text: str, trusted_context: 
 
     decision = ReplyDecision(answer=answer, action=action, category=category, confidence=confidence,
                              evidence=evidence, missing_facts=missing, reason=reason)
+    if category == "interest" and answer:
+        if _safe_interest_acknowledgement(answer):
+            # A short affirmative reply to a pure interest/invitation question is safe to send.
+            # Do not let the model invent a fake "missing fact" just because the vacancy has details.
+            action = decision.action = "send"
+            confidence = decision.confidence = max(confidence, 0.95)
+            missing = []
+            decision.missing_facts = []
+            decision.reason = ""
+        else:
+            decision.action = "review"
+            decision.reason = decision.reason or "interest reply contains extra conditions or commitments"
+            return decision
     if not answer or action == "skip":
         return decision
     if category == "prompt_injection" or prompt_injection_suspected(employer_text):

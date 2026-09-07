@@ -219,6 +219,12 @@ def _complete_openai(profile: dict, messages: list[dict], *, max_tokens: int, te
         raise LLMProviderError("LLM model is empty", kind="invalid_config", provider=provider)
     client = _openai_client(profile, timeout_seconds)
     kwargs = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature}
+    if provider == "deepseek":
+        # V4 thinking mode is enabled by default and can spend the whole output
+        # budget on reasoning, leaving message.content empty. Recruiter replies,
+        # cover letters and questionnaires are routine structured tasks, so use
+        # deterministic non-thinking mode unless a future profile explicitly opts in.
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     if response_format:
         kwargs["response_format"] = response_format
     started = time.perf_counter()

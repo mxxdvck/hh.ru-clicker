@@ -33,6 +33,7 @@ html.phase5-a11y .phase5-vacancy-apply-one,
 html.phase5-a11y .phase5-vacancy-secondary,
 html.phase5-a11y .phase5-app-refresh,
 html.phase5-a11y .phase5-review-refresh,
+html.phase5-a11y .phase5-review-regenerate,
 html.phase5-a11y .phase5-review-copy,
 html.phase5-a11y .phase5-review-open {
   min-height: 34px;
@@ -71,6 +72,7 @@ html.phase5-a11y .phase5-health-main {
   html.phase5-a11y .phase5-app-refresh,
   html.phase5-a11y .phase5-review-controls select,
   html.phase5-a11y .phase5-review-refresh,
+  html.phase5-a11y .phase5-review-regenerate,
   html.phase5-a11y .phase5-review-copy,
   html.phase5-a11y .phase5-review-open,
   html.phase5-a11y .phase5-health-actions .phase5-action-btn {

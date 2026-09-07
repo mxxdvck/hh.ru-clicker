@@ -7,7 +7,7 @@ def test_delivery_mode_requires_all_send_gates():
     assert _llm_delivery_mode(auto_send=True, auto_send_allowed=True, search_only=False) == "send"
     assert _llm_delivery_mode(auto_send=True, auto_send_allowed=False, search_only=False) == "review"
     assert _llm_delivery_mode(auto_send=False, auto_send_allowed=True, search_only=False) == "draft"
-    assert _llm_delivery_mode(auto_send=True, auto_send_allowed=True, search_only=True) == "search_only"
+    assert _llm_delivery_mode(auto_send=True, auto_send_allowed=True, search_only=True) == "send"
 
 
 def test_exception_backoff_is_guarded_by_actual_failure():
@@ -42,11 +42,22 @@ def test_questionnaire_event_summary_handles_missing_or_bad_counts():
 
 def test_robot_draft_metadata_distinguishes_review_manual_and_search_only():
     assert _robot_draft_metadata(auto_send=True, search_only=False, button_source="review") == (
-        "robot_review", "robot button requires human review (review)",
+        "robot_review", "Вопрос робота требует подтверждения (review)",
     )
     assert _robot_draft_metadata(auto_send=False, search_only=False, button_source="safe_continue") == (
         "robot_draft_manual", "",
     )
-    assert _robot_draft_metadata(auto_send=True, search_only=True, button_source="safe_continue") == (
-        "robot_search_only", "",
+    assert _robot_draft_metadata(auto_send=False, search_only=True, button_source="safe_continue") == (
+        "robot_draft_manual", "",
     )
+
+
+def test_search_only_mode_does_not_disable_chat_processing():
+    source = (Path(__file__).parents[1] / "app/manager.py").read_text(encoding="utf-8")
+    start = source.index("def _process_llm_replies(self, state: AccountState) -> None:")
+    end = source.index("def _process_llm_replies_inner", start)
+    gate = source[start:end]
+    assert 'if CONFIG.search_only_mode:' not in gate
+    robot_start = source.index("robot_auto_allowed = (")
+    robot_end = source.index("if not robot_auto_allowed:", robot_start)
+    assert "CONFIG.search_only_mode" not in source[robot_start:robot_end]

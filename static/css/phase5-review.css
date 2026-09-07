@@ -33,6 +33,7 @@
 }
 .phase5-review-controls select,
 .phase5-review-refresh,
+.phase5-review-regenerate,
 .phase5-review-copy,
 .phase5-review-open {
   min-height: 34px;
@@ -44,6 +45,7 @@
 }
 .phase5-review-controls select { padding: 5px 8px; }
 .phase5-review-refresh,
+.phase5-review-regenerate,
 .phase5-review-copy,
 .phase5-review-open {
   padding: 6px 10px;

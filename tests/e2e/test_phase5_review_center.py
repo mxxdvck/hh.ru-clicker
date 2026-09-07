@@ -128,3 +128,28 @@ def test_phase5_review_center_mobile_actions_remain_reachable(ui):
     assert box is not None
     assert box["x"] >= 0
     assert box["x"] + box["width"] <= 390
+
+
+def test_phase5_review_center_can_regenerate_draft(ui):
+    regenerated = dict(REVIEW_ROWS[0])
+    regenerated.update({
+        "llm_reply": "Добрый день! Да, предложение интересно. Готов обсудить подробнее.",
+        "llm_source": "llm_regenerated_review",
+        "llm_category": "interest",
+        "llm_review_reason": "Перегенерировано вручную, перед отправкой проверьте ответ",
+    })
+    ui.set_response(
+        "POST", r"/api/interviews/review-1/regenerate$",
+        body={"ok": True, "row": regenerated},
+    )
+    page = _open_review(ui)
+    first = page.get_by_test_id("phase5-review-card").first
+    expect(first.get_by_test_id("phase5-review-regenerate")).to_be_visible()
+    first.get_by_test_id("phase5-review-regenerate").click()
+    ui.wait_until(lambda: any(
+        c["method"] == "POST" and "/api/interviews/review-1/regenerate" in c["url"]
+        for c in ui.calls
+    ))
+    expect(page.get_by_test_id("phase5-review-center")).to_contain_text(
+        "Да, предложение интересно. Готов обсудить подробнее."
+    )

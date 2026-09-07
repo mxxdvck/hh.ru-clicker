@@ -1,81 +1,71 @@
-# HH Bot Dashboard
+# HH.ru Clicker - extended fork
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-39d0d8?style=flat-square)](https://www.python.org)
-[![Tests](https://img.shields.io/badge/tests-1010_total-39d0d8?style=flat-square)](tests/)
-[![Passed](https://img.shields.io/badge/passed-1010-3fb950?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1432_total-39d0d8?style=flat-square)](tests/)
+[![Passed](https://img.shields.io/badge/passed-1432-3fb950?style=flat-square)](tests/)
 [![Clients](https://img.shields.io/badge/HH-web%20%7C%20mobile%20%7C%20auto-b967ff?style=flat-square)](app/hh_client_factory.py)
 [![WebSocket](https://img.shields.io/badge/realtime-WebSocket-00f0ff?style=flat-square)](app/ws_client.py)
 
-Локальный веб-дашборд для автоматизации работы соискателя на hh.ru: поиск и
-отклики, LLM-ответы рекрутерам, опросники, аналитика резюме и управление
-несколькими аккаунтами.
+Расширенный форк `Vlad9572324/hh.ru-clicker` для автоматизации поиска работы на hh.ru. В форке существенно переработаны безопасность откликов, LLM-автоматизация, опросники, переписка с работодателями и web-dashboard.
 
-> Проект автоматизирует действия на hh.ru. Вы самостоятельно отвечаете за
-> соблюдение правил сервиса, корректность откликов и сохранность своих данных.
+> Upstream: `Vlad9572324/hh.ru-clicker`. Этот репозиторий не является официальным продуктом hh.ru. Пользователь самостоятельно отвечает за соблюдение правил сервиса, корректность откликов и сохранность своих данных.
 
-## Что нового в 1.0.0
+## Что изменено в этом форке
 
-- Завершены Phase 0–5 миграции на mobile API: единый `HHClient`, OAuth Bearer,
-  SMS/email OTP, мобильные чаты, отклики, резюме и сервисные операции.
-- Для каждого аккаунта выбирается `web`, `mobile` или `auto`; недоступная
-  mobile-операция безопасно повторяется через web там, где есть web-capability.
-- Вкладка **🤖 HH Хэдди** показывает диалоги с помощником и историю сообщений.
-- WebSocket push обновляет чаты и счётчики без ожидания polling; polling остаётся
-  запасным каналом.
-- В UI добавлены 8 интеграций: HR-ranking, pre-flight проверки, skill
-  verifications, realtime counters/streak, рекомендации по резюме, autologin,
-  per-account mode selector и WS toggle.
+- Безопасные автоматические отклики с дневными и сессионными лимитами.
+- Режим безопасного поиска без отправки откликов и отдельный запуск откликов по уже найденным вакансиям.
+- DeepSeek и несколько LLM-профилей с fallback/round-robin стратегиями.
+- Автоматическое заполнение HH-анкет и обработка radio/select/checkbox вопросов.
+- Ответы работодателям с использованием резюме и профиля кандидата.
+- Отдельная обработка рекрутер-ботов, повторных вопросов и служебных сообщений.
+- Safety-policy для LLM: неизвестные факты не выдумываются, рискованные ответы уходят на ручную проверку вместо слепой отправки.
+- Review Center с черновиками, причинами ручной проверки и кнопкой **Перегенерировать** без автоматической отправки.
+- Dashboard Phase 5: обзор состояния, action center, вакансии, воронка откликов, Review Center, настройки, health/status и realtime-обновления.
+- Secure storage, backup/restore и защита чувствительных настроек.
+- Регрессионные, backend и browser E2E тесты. Текущий локальный gate: **1432 passed**.
+
+## Состояние проекта
+
+| Фаза | Статус | Содержание |
+|---|---|---|
+| Phase 1-3 | ✅ Готово | отклики, лимиты, safety, поиск и работа с найденными вакансиями |
+| Phase 4 | ✅ Готово | DeepSeek, анкеты, LLM-ответы, профиль кандидата и safety-policy |
+| Phase 5 | ✅ Готово | dashboard, Review Center, UX, health/status и операционное управление |
+| Phase 6 | ⏳ Не реализована | Telegram-уведомления и удалённое управление; сознательно оставлено на потом |
+
+## База, унаследованная от upstream
+
+В проекте сохранена mobile API архитектура upstream: единый `HHClient`, OAuth Bearer, SMS/email OTP, мобильные чаты, отклики, резюме и сервисные операции. Для аккаунта можно использовать режимы `web`, `mobile` или `auto`, а поддерживаемые операции умеют безопасно откатываться на web-flow.
 
 ## Быстрый старт
 
 ```bash
-git clone https://github.com/Vlad9572324/hh.ru-clicker.git
+git clone https://github.com/mxxdvck/hh.ru-clicker.git
 cd hh.ru-clicker
 docker-compose up -d --build
 ```
 
-Откройте <http://localhost:8000>. Порт по умолчанию опубликован только на
-loopback. Для сетевого доступа сначала прочитайте [руководство по
-безопасности](docs/SECURITY.md).
+Откройте <http://localhost:8000>. Порт по умолчанию опубликован только на loopback. Для сетевого доступа сначала прочитайте [руководство по безопасности](docs/SECURITY.md).
 
 ### Подключение аккаунта через SMS OTP
 
 1. Откройте **⚙️ Настройки → Авторизация по телефону / email**.
 2. Введите телефон, запросите SMS и укажите одноразовый код.
-3. Дождитесь сообщения о созданной браузерной сессии. Проверка после кода может
-   занять несколько минут: бот получает профиль и резюме, импортирует OAuth и
-   выполняет autologin.
-4. В карточке аккаунта выберите `mobile` либо `auto` и запустите аккаунт.
+3. Дождитесь создания браузерной сессии и импорта OAuth.
+4. В карточке аккаунта выберите `mobile`, `web` или `auto` и запустите аккаунт.
 
-![SMS OTP](docs/screenshots/otp-auth.svg)
+## Интерфейс и основные сценарии
 
-Подробности: [руководство пользователя](docs/USER_GUIDE.md) и [миграция на
-mobile](docs/MOBILE_MIGRATION_GUIDE.md).
-
-## Интерфейс
-
-| Экран | Назначение |
+| Раздел | Назначение |
 |---|---|
-| [Главная](docs/screenshots/dashboard.svg) | два аккаунта, counters и streak |
-| [HH Хэдди](docs/screenshots/hedi-chat.svg) | чат с помощником |
-| [Навыки](docs/screenshots/skill-verifications.svg) | статусы подтверждения skills |
-| [Статус поиска](docs/screenshots/job-search-status.svg) | job search status аккаунта |
-| [Режим клиента](docs/screenshots/mode-selector.svg) | web/mobile/auto per account |
-| [Отклики](docs/screenshots/applications-ranking.svg) | HR-ranking и история откликов |
-| [Pre-flight](docs/screenshots/preflight-modal.svg) | блокирующие поля перед откликом |
-| [Анализ резюме](docs/screenshots/analyze-resume.svg) | missing skills и рекомендации |
+| Главная / Overview | состояние аккаунтов, health и быстрые действия |
+| Вакансии | безопасный поиск и работа с уже найденными вакансиями |
+| Отклики | история и воронка откликов |
+| Review Center | LLM-черновики, ручная проверка и перегенерация |
+| Настройки | лимиты, режимы, LLM, backup/restore и параметры аккаунтов |
+| HH Хэдди | встроенный чат с помощником HH |
 
-Все изображения — детерминированные SVG-мокапы. В них нет выгрузок из
-пользовательских данных: имя, телефон и `resume_hash` заменены тестовыми
-значениями.
-
-## Режимы клиента
-
-- `web` — browser cookies и web endpoints;
-- `mobile` — OAuth/mobile API с поддерживаемым fallback на web;
-- `auto` — mobile при наличии пригодного OAuth-токена, иначе web.
-
-Архитектурная схема и состояние фаз: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Автоответы специально разделяют безопасные стандартные кейсы и ситуации, где нужен человек. Служебные сообщения не получают ответов, повторные безопасные вопросы могут использовать ранее подтверждённый ответ, а приглашения на собеседование, неоднозначные условия и неподтверждённые факты остаются на review.
 
 ## Проверка
 
@@ -84,8 +74,7 @@ python -m pip install -r requirements.txt -r requirements-dev.txt
 pytest -q
 ```
 
-Для этой ревизии: **1010 collected**, **1010 passed**. Актуальный
-итог всегда проверяйте локальным `pytest -q`.
+Для текущей ревизии: **1432 passed**. Актуальный итог всегда проверяйте локальным `pytest -q`.
 
 ## Документация
 

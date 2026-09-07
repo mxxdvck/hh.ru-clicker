@@ -181,25 +181,65 @@ def _fingerprint_key(key: str) -> str:
 
 
 def _select_quick_reply(replies: list, employer_text: str) -> str:
+    from app.llm_policy import (
+        classify_employer_text, is_non_actionable_employer_message, is_reminder_message,
+    )
+    employer_text = str(employer_text or "").strip()
+    if is_non_actionable_employer_message(employer_text) or is_reminder_message(employer_text):
+        return ""
     values = [str(item or "").strip() for item in (replies or []) if str(item or "").strip()]
     if not values:
         return ""
-    is_question = "?" in str(employer_text or "")
+    is_question = "?" in employer_text
+    employer_category = classify_employer_text(employer_text)
     greetings = ("здравствуйте", "добрый день", "добрый вечер", "приветствую")
 
     def score(value: str):
         low = value.lower()
         greeting_only = len(value) < 25 and any(greeting in low for greeting in greetings)
-        return (0 if (is_question and greeting_only) else 1, len(value))
+        reply_category = classify_employer_text(value)
+        category_ok = not (employer_category == "general" and reply_category != "general")
+        return (1 if category_ok else 0, 0 if (is_question and greeting_only) else 1, len(value))
 
     best = max(values, key=score)
+    best_score = score(best)
+    if not best_score[0] or (is_question and not best_score[1]):
+        return ""
     return best if len(best) >= (20 if is_question else 5) else ""
 
 
+def _human_llm_reason(reason: str) -> str:
+    value = str(reason or "").strip()
+    known = {
+        "all configured providers failed": "LLM-провайдер временно не смог сформировать ответ",
+        "no configured provider": "LLM-провайдер не настроен",
+        "reminder refers to a previous question that is unavailable in chat history": (
+            "в истории чата не найден предыдущий вопрос работодателя"
+        ),
+        "high-risk factual answer lacks verifiable evidence": "не хватает подтверждённых данных для безопасного ответа",
+        "generated answer contains an unsupported numeric claim": "ответ содержит неподтверждённое число",
+        "experience duration claim is not supported by trusted facts": "срок опыта не подтверждён данными резюме",
+        "experience claim is not sufficiently grounded in trusted facts": "описание опыта недостаточно подтверждено резюме",
+        "factual first-person claim lacks trusted evidence": "для ответа не хватает подтверждённых фактов",
+        "factual first-person claim is not sufficiently grounded in trusted facts": "ответ недостаточно подтверждён данными кандидата",
+        "generated text does not look like a direct answer": "ответ получился не по существу вопроса",
+        "interest reply contains extra conditions or commitments": "\u043e\u0442\u0432\u0435\u0442 \u043d\u0430 \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u0441\u043e\u0434\u0435\u0440\u0436\u0438\u0442 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0443\u0441\u043b\u043e\u0432\u0438\u044f \u0438\u043b\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u0441\u0442\u0432\u0430",
+    }
+    return known.get(value, value)
+
+
+def _llm_review_text(decision) -> str:
+    missing = [str(v).strip() for v in (getattr(decision, "missing_facts", None) or []) if str(v).strip()]
+    if missing:
+        return "Нужно уточнить вручную: " + ", ".join(missing[:4]) + ". LLM не будет придумывать ответ."
+    reason = _human_llm_reason(getattr(decision, "reason", ""))
+    if reason:
+        return "Нужно проверить вручную: " + reason[:500]
+    return "Нужно проверить ответ вручную: недостаточно подтверждённых данных."
+
+
 def _llm_delivery_mode(*, auto_send: bool, auto_send_allowed: bool, search_only: bool) -> str:
-    """Classify one generated reply without conflating drafts, review and sending."""
-    if search_only:
-        return "search_only"
+    """Classify chat delivery. Vacancy search-only mode must not disable communications."""
     if not auto_send:
         return "draft"
     if not auto_send_allowed:
@@ -208,12 +248,10 @@ def _llm_delivery_mode(*, auto_send: bool, auto_send_allowed: bool, search_only:
 
 
 def _robot_draft_metadata(*, auto_send: bool, search_only: bool, button_source: str) -> tuple[str, str]:
-    """Classify a non-sent recruiter-button outcome for persistence and review UI."""
-    if search_only:
-        return "robot_search_only", ""
+    """Classify a non-sent recruiter-button outcome. Search-only affects vacancies, not chat."""
     if not auto_send:
         return "robot_draft_manual", ""
-    return "robot_review", f"robot button requires human review ({button_source or 'review'})"
+    return "robot_review", f"Вопрос робота требует подтверждения ({button_source or 'review'})"
 
 
 def _questionnaire_event_summary(info: dict | None) -> str:
@@ -273,6 +311,10 @@ from app.hh_api import (
 
 from app.llm import (generate_llm_reply_decision, generate_llm_cover_letter, _openclaw_command,
                      get_llm_last_status, get_llm_status_summary)
+from app.llm_policy import (
+    is_non_actionable_employer_message, is_reminder_message,
+    latest_unanswered_employer_question,
+)
 
 from app.hh_client_factory import get_client
 from app.apply_safety import reserve_apply, finalize_apply
@@ -3435,9 +3477,6 @@ class BotManager:
 
     def _process_llm_replies(self, state: AccountState) -> None:
         """Check recent unread negotiations for employer messages and auto-reply using LLM."""
-        if CONFIG.search_only_mode:
-            state.llm_status = "search_only"
-            return
         if not state.llm_enabled:
             return
         # Non-blocking: if another thread is already processing this account, skip
@@ -3518,7 +3557,8 @@ class BotManager:
             unread = item.get("unreadCount", 0)
             last_msg = item.get("lastMessage") or {}
             sender_id = last_msg.get("participantId", "")
-            last_text = (last_msg.get("text") or "")[:40]
+            last_text_full = str(last_msg.get("text") or "").strip()
+            last_text = last_text_full[:40]
             wf = last_msg.get("workflowTransition") or {}
             # Аудит 2026-08-17 #27: если cur_pid не определён (пустой ответ
             # /participants от mobile API), раньше from_employer всегда False
@@ -3531,6 +3571,20 @@ class BotManager:
                 from_employer = bool(sender_id and sender_id != cur_pid)
             else:
                 from_employer = bool(sender_id)
+            if from_employer and not wf and is_non_actionable_employer_message(last_text_full):
+                skipped_system += 1
+                last_msg_id_early = str(last_msg.get("id", ""))
+                if last_msg_id_early:
+                    state.llm_replied_msgs[(str(item_id), last_msg_id_early)] = None
+                di = display_info.get(str(item_id), {})
+                upsert_interview(
+                    str(item_id), acc=state.short, acc_color=state.color,
+                    employer=di.get("subtitle", ""), vacancy_title=di.get("title", ""),
+                    employer_last_msg=last_text_full, needs_reply=False, chat_status="waiting_hr",
+                    llm_reply="", llm_source="system_notice", llm_category="system", llm_review_reason="",
+                )
+                log_debug(f"LLM [{state.short}] {item_id}: финальное/служебное сообщение без ответа, пропуск")
+                continue
             # Early check: known 409 (persisted from DB or current session)
             if item_id in state._llm_no_chat:
                 skipped_locked += 1
@@ -3770,6 +3824,28 @@ class BotManager:
                     full_history = get_client(state.acc).fetch_chat_history(neg_id, max_messages=20)
                 conversation = full_history if full_history else thread["messages"]
 
+                if is_reminder_message(employer_msg) and not latest_unanswered_employer_question(conversation):
+                    try:
+                        reminder_history = fetch_negotiation_messages_oauth(state.acc, neg_id, max_messages=60)
+                    except Exception:
+                        reminder_history = []
+                    if reminder_history:
+                        conversation = reminder_history
+                if is_reminder_message(employer_msg) and not latest_unanswered_employer_question(conversation):
+                    review_text = "Нужно проверить предыдущий вопрос работодателя: сам вопрос не найден в доступной истории чата."
+                    upsert_interview(
+                        neg_id, acc=state.short, acc_color=state.color, employer=employer,
+                        vacancy_title=vacancy_title, vacancy_id=vacancy_id, employer_last_msg=employer_msg,
+                        llm_reply=review_text, llm_sent=False, llm_source="llm_context_review",
+                        llm_category="general",
+                        llm_review_reason="Работодатель напомнил о предыдущем вопросе, но сам вопрос отсутствует в доступной истории.",
+                    )
+                    self._add_log(state.short, state.color,
+                        f"🤖 [{employer_short}] напоминание без доступного предыдущего вопроса → ручная проверка",
+                        "warning", neg_id=neg_id)
+                    state._llm_temp_skip[key] = time.time() + 1800
+                    continue
+
                 _last_emp_raw = None
                 if full_history:
                     for msg_raw in reversed(full_history):
@@ -3801,16 +3877,18 @@ class BotManager:
                                      chat_status="robot")
                     robot_auto_allowed = (
                         bool(CONFIG.llm_auto_send)
-                        and not CONFIG.search_only_mode
                         and bool(btn_text)
-                        and _btn_source == "safe_continue"
+                        and _btn_source in {"safe_continue", "prior_answer"}
                         and isinstance(_btn_idx, int)
                         and not isinstance(_btn_idx, bool)
                         and 0 <= _btn_idx < len(_text_buttons)
                     )
                     if not robot_auto_allowed:
                         options_text = " / ".join(str(b.get("text") or "") for b in _text_buttons)[:600]
-                        review_text = f"Robot question requires review. Options: {options_text}"
+                        if btn_text and _btn_source in {"safe_continue", "prior_answer"}:
+                            review_text = btn_text
+                        else:
+                            review_text = f"Нужно выбрать ответ вручную. Варианты: {options_text}"
                         robot_draft_source, robot_review_reason = _robot_draft_metadata(
                             auto_send=bool(CONFIG.llm_auto_send),
                             search_only=bool(CONFIG.search_only_mode),
@@ -3976,7 +4054,7 @@ class BotManager:
                             reply_text = best
                             reply_source = "quick_reply_review"
                             reply_category = "quick_reply"
-                            reply_review_reason = "predefined quick reply requires human review"
+                            reply_review_reason = "Готовый ответ HH требует ручной проверки"
                 if _has_own_llm:
                     log_debug(f"LLM [{state.short}] {neg_id}: generating structured Phase 4 decision")
                     ai_hint = bool(state.vacancy_meta.get(vacancy_id, {}).get("ai_assistant_enabled"))
@@ -3990,7 +4068,7 @@ class BotManager:
                     )
                     reply_text = decision.answer
                     reply_category = decision.category
-                    reply_review_reason = decision.reason
+                    reply_review_reason = _human_llm_reason(decision.reason)
                     reply_auto_send_allowed = bool(decision.auto_send_allowed)
                     reply_source = "llm_auto_safe" if reply_auto_send_allowed else "llm_review"
                     if reply_text and not reply_auto_send_allowed:
@@ -4000,17 +4078,14 @@ class BotManager:
                             f"confidence={decision.confidence:.2f}",
                             "warning", neg_id=neg_id,
                         )
-                    if not reply_text and _has_own_llm and getattr(CONFIG, "llm_use_quick_replies", True):
-                        # LLM молчит (rate-limit / down) — попробуем quick_replies как последний резерв.
-                        qr = get_client(state.acc).fetch_quick_replies(neg_id, last_msg_id)
-                        if qr:
-                            best = _select_quick_reply(qr, hr_last)
-                            if best:
-                                reply_text = best
-                                reply_source = "quick_reply_fallback_review"
-                                reply_category = "quick_reply"
-                                reply_review_reason = "fallback quick reply requires human review"
-                                log_debug(f"LLM [{state.short}] {neg_id}: quick_reply fallback selected; len={len(reply_text)}")
+                    # Если собственный LLM настроен, его сбой НЕ подменяем quick_replies HH.
+                    # Иначе случайная заготовка выглядит как ответ нейросети и может быть не по смыслу.
+                    if not reply_text and decision.action != "send":
+                        reply_text = _llm_review_text(decision)
+                        reply_source = "llm_review"
+                        reply_category = decision.category or "general"
+                        reply_review_reason = _human_llm_reason(decision.reason) or "Требуется ручная проверка"
+                        reply_auto_send_allowed = False
                     if not reply_text:
                         llm_status = get_llm_last_status(f"{state.short}:{neg_id}", "reply")
                         if llm_status.get("provider") == "openclaw" and llm_status.get("status") == "timeout":
