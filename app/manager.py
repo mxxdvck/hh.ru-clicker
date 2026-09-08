@@ -321,7 +321,7 @@ from app.apply_safety import reserve_apply, finalize_apply
 from app.apply_mode import search_only_blocked, set_approved_search_apply
 from app.application_ledger import (
     mark_interrupted_startup, mark_run_interrupted, mark_application, list_interrupted,
-    count_applied_today,
+    count_applied_today, get_blocking_vacancy_ids,
 )
 
 from app.hh_chat import (
@@ -1053,6 +1053,7 @@ class BotManager:
             state.paused_reason = ""
             state.status = "applying"
             state.status_detail = f"Подтверждён список из {len(approved_queue)} вакансий; повторный поиск не запускается"
+        self._begin_search_apply_summary(state, len(approved_queue))
         if 0 <= idx < len(self.account_states):
             try:
                 from app.ws_manager import ws_manager
@@ -1065,6 +1066,63 @@ class BotManager:
             "success",
         )
         return True
+
+    def _begin_search_apply_summary(self, state, total: int) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with state._state_lock:
+            state.search_apply_summary = {
+                "active": True, "total": max(int(total or 0), 0), "processed": 0,
+                "sent": 0, "already": 0, "questionnaire_review": 0,
+                "safety": 0, "tests": 0, "errors": 0, "limit": 0,
+                "deferred": 0, "remaining": max(int(total or 0), 0),
+                "started_at": now, "finished_at": "", "finish_reason": "",
+            }
+            state.search_apply_results = []
+            state._search_apply_result_ids = set()
+
+    def _record_search_apply_outcome(self, state, vacancy_id: str, outcome: str,
+                                     reason: str = "") -> None:
+        summary = getattr(state, "search_apply_summary", {}) or {}
+        if not summary.get("active"):
+            return
+        vid = str(vacancy_id or "").strip()
+        if not vid:
+            return
+        allowed = {"sent", "already", "questionnaire_review", "safety",
+                   "tests", "errors", "limit", "deferred"}
+        outcome = outcome if outcome in allowed else "errors"
+        with state._state_lock:
+            if vid in state._search_apply_result_ids:
+                return
+            state._search_apply_result_ids.add(vid)
+            summary = state.search_apply_summary
+            summary[outcome] = int(summary.get(outcome, 0) or 0) + 1
+            summary["processed"] = int(summary.get("processed", 0) or 0) + 1
+            total = int(summary.get("total", 0) or 0)
+            summary["remaining"] = max(0, total - int(summary["processed"]))
+            meta = dict((getattr(state, "vacancy_meta", {}) or {}).get(vid, {}) or {})
+            state.search_apply_results.append({
+                "id": vid,
+                "title": str(meta.get("title") or ""),
+                "company": str(meta.get("company") or ""),
+                "outcome": outcome,
+                "reason": str(reason or "")[:300],
+            })
+            if len(state.search_apply_results) > 100:
+                state.search_apply_results = state.search_apply_results[-100:]
+
+    def _finish_search_apply_summary(self, state, reason: str = "completed") -> None:
+        summary = getattr(state, "search_apply_summary", {}) or {}
+        if not summary or not summary.get("active"):
+            return
+        with state._state_lock:
+            summary = state.search_apply_summary
+            summary["active"] = False
+            summary["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            summary["finish_reason"] = str(reason or "completed")
+            total = int(summary.get("total", 0) or 0)
+            processed = int(summary.get("processed", 0) or 0)
+            summary["remaining"] = max(0, total - processed)
 
     def toggle_account_llm(self, idx: int):
         state = None
@@ -1317,6 +1375,8 @@ class BotManager:
                 _hh_interviews_list = s.hh_interviews_list[:20]
                 _current_vacancy_idx = s.current_vacancy_idx
                 _total_vacancies = s.total_vacancies
+                _search_apply_summary = dict(getattr(s, "search_apply_summary", {}) or {})
+                _search_apply_results = [dict(x) for x in (getattr(s, "search_apply_results", []) or [])]
 
             _total_applied = len(get_account_applied(s.name))
 
@@ -1337,6 +1397,8 @@ class BotManager:
                 "found_vacancies": s.found_vacancies,
                 "search_preview": _search_preview(s),
                 "filter_stats": dict(getattr(s, "filter_stats", {}) or {}),
+                "search_apply_summary": _search_apply_summary,
+                "search_apply_results": _search_apply_results,
                 "current_vacancy_title": s.current_vacancy_title,
                 "current_vacancy_company": s.current_vacancy_company,
                 "current_vacancy_idx": _current_vacancy_idx,
@@ -1438,6 +1500,8 @@ class BotManager:
                     _hh_interviews_list = s.hh_interviews_list[:20]
                     _current_vacancy_idx = s.current_vacancy_idx
                     _total_vacancies = s.total_vacancies
+                    _search_apply_summary = dict(getattr(s, "search_apply_summary", {}) or {})
+                    _search_apply_results = [dict(x) for x in (getattr(s, "search_apply_results", []) or [])]
 
                 _total_applied = len(get_account_applied(s.acc["name"]))
 
@@ -1463,6 +1527,8 @@ class BotManager:
                     "found_vacancies": s.found_vacancies,
                     "search_preview": _search_preview(s),
                     "filter_stats": dict(getattr(s, "filter_stats", {}) or {}),
+                    "search_apply_summary": _search_apply_summary,
+                    "search_apply_results": _search_apply_results,
                     "current_vacancy_title": s.current_vacancy_title,
                     "current_vacancy_company": s.current_vacancy_company,
                     "current_vacancy_idx": _current_vacancy_idx,
@@ -1911,7 +1977,6 @@ class BotManager:
             # Never leak a one-shot search approval into a later collection cycle.
             set_approved_search_apply(False)
             approved_search_batch = False
-            approved_start_sent = int(getattr(state, "sent", 0) or 0)
             # Global + per-account pause
             while (self.paused or state.paused) and not self._stop_event.is_set() and not state._deleted:
                 # Auto-reset daily limit pause when new day starts
@@ -2277,6 +2342,11 @@ class BotManager:
             auto_response_skipped = 0
             accredited_skipped = 0
             employer_rating_skipped = 0
+            ledger_blocked_count = 0
+            questionnaire_pending_count = 0
+            known_ledger = get_blocking_vacancy_ids(
+                acc.get("name", state.name), str(acc.get("resume_hash", "") or "")
+            )
             state.rating_skipped = 0  # per-cycle counter, reset here
             apply_tests = state.apply_tests or CONFIG.auto_apply_tests
             title_include_keywords = [
@@ -2406,7 +2476,16 @@ class BotManager:
                         # Cache hit для UI / Apply tab
                         if rating_info:
                             meta["employer_rating"] = rating_info
-                if is_applied(acc["name"], vid):
+                ledger_status = known_ledger.get(str(vid))
+                if ledger_status:
+                    if ledger_status in {"applied", "already"}:
+                        already_count += 1
+                        state.already_applied += 1
+                    elif ledger_status == "needs_questionnaire":
+                        questionnaire_pending_count += 1
+                    else:
+                        ledger_blocked_count += 1
+                elif is_applied(acc["name"], vid):
                     already_count += 1
                     state.already_applied += 1
                 elif (is_test(vid) or state._test_failures.get(vid, 0) >= 2) and not apply_tests:
@@ -2458,6 +2537,8 @@ class BotManager:
                 "accredited": accredited_skipped,
                 "employer_rating": employer_rating_skipped,
                 "already_applied": already_count,
+                "ledger_blocked": ledger_blocked_count,
+                "questionnaire_pending": questionnaire_pending_count,
                 "tests": test_count,
                 "schedule": schedule_skipped,
                 "salary": salary_skipped,
@@ -2599,11 +2680,11 @@ class BotManager:
                         self._add_log(state.short, state.color,
                                       "⚠️ Подтверждённый safe-search список пуст; отправка отменена",
                                       "warning")
+                        self._finish_search_apply_summary(state, "empty_after_confirmation")
                         continue
                     state.vacancies_queue = list(filtered)
                     state.total_vacancies = len(filtered)
                     approved_search_batch = True
-                    approved_start_sent = int(getattr(state, "sent", 0) or 0)
                     set_approved_search_apply(True)
                     state.status = "applying"
                     state.status_detail = f"Отклик по найденному списку: 0/{len(filtered)}"
@@ -2625,6 +2706,9 @@ class BotManager:
                 self._add_log(state.short, state.color,
                               "SAFETY: cannot verify HH daily counter; apply cycle skipped",
                               "warning")
+                if approved_search_batch:
+                    self._finish_search_apply_summary(state, "quota_unavailable")
+                    set_approved_search_apply(False)
                 if self._stop_event.wait(min(max(int(CONFIG.pause_between_cycles), 1), 60)):
                     return
                 continue
@@ -2704,6 +2788,7 @@ class BotManager:
                                 state.hh_today_applies = server_used
                                 state.hh_today_applies_updated = datetime.now().isoformat(timespec="seconds")
                             used = max(used, server_used)
+                    original_batch = list(batch)
                     protected_batch, deferred_old = _protect_fresh_batch(
                         batch, state.vacancy_meta,
                         hours=CONFIG.fresh_vacancy_hours,
@@ -2713,6 +2798,13 @@ class BotManager:
                     )
                     if deferred_old:
                         state.fresh_reserved_skipped += deferred_old
+                        protected_ids = {str(v) for v in protected_batch}
+                        for deferred_vid in original_batch:
+                            if str(deferred_vid) not in protected_ids:
+                                self._record_search_apply_outcome(
+                                    state, deferred_vid, "deferred",
+                                    f"fresh reserve keeps {reserve} slots for newer vacancies",
+                                )
                     batch = protected_batch
                     if not batch:
                         state.status = "waiting"
@@ -2739,6 +2831,7 @@ class BotManager:
                             display_title = (meta.get("title") or vid)[:40]
                             self._add_log(state.short, state.color,
                                 f"⏭ {display_title}: пропуск ({reason})", "warning")
+                            self._record_search_apply_outcome(state, vid, "safety", reason)
                         else:
                             if precheck.get("soft_missing"):
                                 self._add_log(state.short, state.color,
@@ -2804,12 +2897,15 @@ class BotManager:
                     if decision.code == "already":
                         state.already_applied += 1
                         self._add_response(state, vid, "", "", "already")
+                        self._record_search_apply_outcome(state, vid, "already", decision.message)
                         continue
                     if decision.code in {"search_only", "daily_limit", "hh_limit", "run_limit"}:
                         hard_block = decision
+                        self._record_search_apply_outcome(state, vid, "limit", decision.message)
                         break
                     self._add_log(state.short, state.color,
                                   f"SAFETY {vid}: {decision.message}", "warning")
+                    self._record_search_apply_outcome(state, vid, "safety", decision.message)
                 batch = reserved_batch
                 stop_after_batch = hard_block
                 if not batch:
@@ -2873,6 +2969,7 @@ class BotManager:
                         self._check_auto_pause(state)
                         finalize_apply(acc.get("name", state.name), vid, resume_id, "error",
                                        {"exception": err_msg, "transient": True}, state=state)
+                        self._record_search_apply_outcome(state, vid, "errors", err_msg)
                         continue
 
                     result, info = result_data
@@ -2924,6 +3021,8 @@ class BotManager:
                         self._add_acc_event(state, "✅", "sent", title or vid, company,
                                             salary if salary else "")
 
+                        self._record_search_apply_outcome(state, vid, "sent", "\u041e\u0442\u043a\u043b\u0438\u043a \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d")
+
                     elif result == "test":
                         title = info.get("title", "")
                         company = info.get("company", "")
@@ -2942,6 +3041,10 @@ class BotManager:
                                           f"⏭️ Тест пропущен: {display_title}", "info")
                             self._add_acc_event(state, "⏭️", "test_skip",
                                                 title or vid, company, "пропущено")
+                            self._record_search_apply_outcome(
+                                state, vid, "tests",
+                                "\u0412\u0430\u043a\u0430\u043d\u0441\u0438\u044f \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0442\u0435\u0441\u0442/\u0430\u043d\u043a\u0435\u0442\u0443; \u0430\u0432\u0442\u043e\u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430 \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d\u0430",
+                            )
                         else:
                             # Пробуем автозаполнить опрос
                             q_decision = reserve_apply(
@@ -2952,6 +3055,7 @@ class BotManager:
                                 self._add_log(state.short, state.color,
                                               f"SAFETY questionnaire {vid}: {q_decision.message}", "warning")
                                 state.tests += 1
+                                self._record_search_apply_outcome(state, vid, "safety", q_decision.message)
                                 continue
                             q_result, q_info = asyncio.run(get_client(acc).fill_questionnaire(
                                 vid, vacancy_title=title, company=company))
@@ -2971,6 +3075,7 @@ class BotManager:
                                     state, "\U0001f4dd", "questionnaire", title or vid, company,
                                     _questionnaire_event_summary(q_info),
                                 )
+                                self._record_search_apply_outcome(state, vid, "sent", "\u0410\u043d\u043a\u0435\u0442\u0430 \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0430 \u0438 \u043e\u0442\u043a\u043b\u0438\u043a \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d")
                             elif q_result == "test" and (q_info or {}).get("error_type") == "questionnaire_review_required":
                                 review_fields = list((q_info or {}).get("review_fields") or [])
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
@@ -2990,6 +3095,10 @@ class BotManager:
                                     state, "\U0001f9ea", "test", title or vid, company,
                                     "Phase 4 review required",
                                 )
+                                self._record_search_apply_outcome(
+                                    state, vid, "questionnaire_review",
+                                    f"\u0410\u043d\u043a\u0435\u0442\u0430 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0440\u0443\u0447\u043d\u043e\u0439 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 ({len(review_fields)} \u043f\u043e\u043b\u0435\u0439)",
+                                )
                                 continue
                             elif q_result == "limit":
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
@@ -3003,6 +3112,9 @@ class BotManager:
                                 self._add_log(state.short, state.color,
                                               f"\U0001f6ab ЛИМИТ при опросе! Повторная попытка в {state.limit_reset_time.strftime('%H:%M')}",
                                               "error")
+                                self._record_search_apply_outcome(
+                                    state, vid, "limit", "\u041b\u0438\u043c\u0438\u0442 HH \u043f\u0440\u0438 \u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0435 \u0430\u043d\u043a\u0435\u0442\u044b"
+                                )
                                 continue
                             elif q_result == "auth_error":
                                 finalize_apply(acc.get("name", state.name), vid, resume_id,
@@ -3015,6 +3127,9 @@ class BotManager:
                                     "⚠️ Куки протухли! Обновите куки и снимите паузу.", "error",
                                 )
                                 self._add_acc_event(state, "⚠️", "error", "Авторизация", "", "Обновите куки")
+                                self._record_search_apply_outcome(
+                                    state, vid, "errors", "\u041e\u0448\u0438\u0431\u043a\u0430 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0438 \u043f\u0440\u0438 \u0430\u043d\u043a\u0435\u0442\u0435"
+                                )
                                 continue
                             else:
                                 # The old code immediately wrote failed_permanent here, so the
@@ -3036,6 +3151,11 @@ class BotManager:
                                 self._add_acc_event(state, "\U0001f9ea", "test",
                                                     title or vid, company, "не пройден")
 
+                                self._record_search_apply_outcome(
+                                    state, vid, "errors",
+                                    str((q_info or {}).get("reason") or (q_info or {}).get("error_type") or "questionnaire_failed"),
+                                )
+
                     elif result == "already":
                         state.already_applied += 1
                         already_info = state.vacancy_meta.get(vid, {})
@@ -3043,6 +3163,7 @@ class BotManager:
                                        "already", already_info, state=None)
                         self._push_action(state, f"\U0001f504 {vid}")
                         self._add_response(state, vid, "", "", "already")
+                        self._record_search_apply_outcome(state, vid, "already", "HH \u0441\u043e\u043e\u0431\u0449\u0430\u0435\u0442: \u043e\u0442\u043a\u043b\u0438\u043a \u0443\u0436\u0435 \u0431\u044b\u043b")
 
                     elif result == "limit":
                         finalize_apply(acc.get("name", state.name), vid, resume_id,
@@ -3075,11 +3196,15 @@ class BotManager:
                                 f"\U0001f6ab ЛИМИТ! Повторная попытка в {state.limit_reset_time.strftime('%H:%M')}",
                                 "error",
                             )
+                        self._record_search_apply_outcome(state, vid, "limit", "HH \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0438\u043b \u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0443 \u043e\u0442\u043a\u043b\u0438\u043a\u043e\u0432")
                         continue
 
                     elif result == "auth_error":
                         finalize_apply(acc.get("name", state.name), vid, resume_id,
                                        "auth_error", info or {}, state=None)
+                        self._record_search_apply_outcome(
+                            state, vid, "errors", "\u041e\u0448\u0438\u0431\u043a\u0430 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0438"
+                        )
                         oauth_capable = (
                             state.use_oauth
                             or CONFIG.use_oauth_apply
@@ -3132,6 +3257,8 @@ class BotManager:
                         self._add_acc_event(state, "❌", "error", vid, "", debug_info[:60])
                         self._check_auto_pause(state)
 
+                        self._record_search_apply_outcome(state, vid, "errors", debug_info)
+
                 if stop_after_batch is not None:
                     state.hard_stopped = stop_after_batch.code != "search_only"
                     state.paused = True
@@ -3158,23 +3285,36 @@ class BotManager:
                     i >= len(filtered) and not state.limit_exceeded and not state.hard_stopped
                     and not state.cookies_expired and not state.paused
                 )
+                finish_reason = "completed" if finished_approved_queue else (
+                    state.paused_reason or ("auth_error" if state.cookies_expired else "stopped")
+                )
+                self._finish_search_apply_summary(state, finish_reason)
+                summary = dict(getattr(state, "search_apply_summary", {}) or {})
                 if finished_approved_queue:
-                    sent_now = max(0, int(getattr(state, "sent", 0) or 0) - approved_start_sent)
                     state.vacancies_queue = []
                     state.total_vacancies = 0
                     state.current_vacancy_idx = 0
                     state.paused = True
                     state.paused_reason = "search_only"
                     state.status = "search_only"
-                    state.status_detail = f"Список обработан: отправлено {sent_now}; безопасный поиск остаётся включён"
+                    state.status_detail = (
+                        f"\u0421\u043f\u0438\u0441\u043e\u043a \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d: "
+                        f"\u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e {summary.get('sent', 0)}, "
+                        f"\u0443\u0436\u0435 \u0431\u044b\u043b\u043e {summary.get('already', 0)}, "
+                        f"review {summary.get('questionnaire_review', 0)}, "
+                        f"safety {summary.get('safety', 0)}, \u043e\u0448\u0438\u0431\u043a\u0438 {summary.get('errors', 0)}"
+                    )
                     self._add_log(
                         state.short, state.color,
-                        f"✅ Сохранённый список обработан без нового поиска: отправлено {sent_now}; аккаунт снова на паузе",
+                        f"SAFE-LIST done: total={summary.get('total', 0)} processed={summary.get('processed', 0)} "
+                        f"sent={summary.get('sent', 0)} already={summary.get('already', 0)} "
+                        f"review={summary.get('questionnaire_review', 0)} safety={summary.get('safety', 0)} "
+                        f"tests={summary.get('tests', 0)} errors={summary.get('errors', 0)}",
                         "success",
                     )
                     continue
 
-            # Очистка
+            # Clear transient vacancy display after a non-approved cycle or an interrupted approved batch.
             state.current_vacancy_title = ""
             state.current_vacancy_company = ""
             if state.short in self.vacancy_queues:

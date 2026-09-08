@@ -300,6 +300,31 @@ def get_status_counts(account_name: str) -> dict[str, int]:
         conn.close()
 
 
+def get_blocking_vacancy_ids(account_name: str, resume_id: str = "") -> dict[str, str]:
+    """Return vacancy ids that the durable ledger must not send again.
+
+    Search filtering used to consult only the legacy JSON cache. HH responses
+    recorded as ``already`` therefore reappeared in every safe-search shortlist
+    and were rejected only after the user pressed Apply. Reading the ledger in
+    one query keeps the preview aligned with what the send guard already knows.
+    """
+    account_name = str(account_name or "").strip()
+    resume_id = str(resume_id or "").strip()
+    if not account_name:
+        return {}
+    conn = _connect()
+    try:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT vacancy_id,status FROM applications WHERE account_name=? AND resume_id=? "
+            "AND status IN ('applying','applied','already','needs_questionnaire','interrupted','failed_permanent')",
+            (account_name, resume_id),
+        ).fetchall()
+        return {str(row["vacancy_id"]): str(row["status"]) for row in rows}
+    finally:
+        conn.close()
+
+
 def list_interrupted(account_name: str, limit: int = 200) -> list[dict]:
     """Return unresolved previous-run sends for safe startup reconciliation."""
     conn = _connect()

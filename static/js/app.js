@@ -3766,6 +3766,7 @@ function buildCardHTML(acc) {
       <button id="acc-search-apply-btn-${acc.idx}" class="btn-sm" style="display:none;margin:6px 0;color:var(--green);border-color:var(--green)" onclick="applyFoundSearchResults(${acc.idx},this)">✅ Откликнуться на найденные</button>
       <div id="acc-search-preview-${acc.idx}" style="margin-top:5px;max-height:260px;overflow:auto;font-size:11px"></div>
     </details>
+    <div id="acc-search-apply-summary-${acc.idx}" style="display:none;margin:5px 0;border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:11px"></div>
     <div class="acc-hh-stats" id="acc-hh-${acc.idx}">${t('card_hh_loading')}</div>
     <div id="acc-llm-status-${acc.idx}" style="font-size:11px;padding:2px 0;color:var(--cyan);display:none"></div>
     <div class="acc-resume-stats" id="acc-rs-${acc.idx}" style="display:none">
@@ -4045,14 +4046,16 @@ function updateCard(card, acc) {
     }
   }
 
-  // Search-only preview: даёт проверить выдачу до разрешения откликов.
+  // Search-only preview: the list passed search filters, but final preflight
+  // and HH-side duplicate checks still run when the user approves the batch.
   const spWrap = document.getElementById('acc-search-preview-wrap-' + acc.idx);
   const spBody = document.getElementById('acc-search-preview-' + acc.idx);
   const spCount = document.getElementById('acc-search-preview-count-' + acc.idx);
   const spApplyBtn = document.getElementById('acc-search-apply-btn-' + acc.idx);
   const preview = Array.isArray(acc.search_preview) ? acc.search_preview : [];
   const searchOnly = Boolean(State.lastSnapshot?.config?.search_only_mode);
-  const canApplyPreview = searchOnly && preview.length > 0 && acc.paused && acc.paused_reason === 'search_only';
+  const queueCount = Math.max(0, Number(acc.total_vacancies || preview.length || 0));
+  const canApplyPreview = searchOnly && queueCount > 0 && acc.paused && acc.paused_reason === 'search_only';
 
   const fsWrap = document.getElementById('acc-search-filter-wrap-' + acc.idx);
   const fsBody = document.getElementById('acc-search-filter-' + acc.idx);
@@ -4064,36 +4067,38 @@ function updateCard(card, acc) {
   const hasFilterStats = searchOnly && (rawCollected > 0 || candidateCount > 0 || Object.keys(fs).length > 0);
   if (fsWrap) {
     fsWrap.style.display = hasFilterStats ? '' : 'none';
-    if (fsSummary) fsSummary.textContent = `${rawCollected} → ${acceptedCount}`;
+    if (fsSummary) fsSummary.textContent = `${rawCollected} \u2192 ${acceptedCount}`;
     if (fsBody && hasFilterStats) {
       const rows = [
-        ['Собрано', rawCollected],
-        ['Уникальных', Number(fs.unique_from_search || 0)],
-        ['Дубли', Number(fs.duplicates || 0)],
-        ['Перед фильтрами', candidateCount],
-        ['Название восстановлено', Number(fs.title_recovered || 0)],
-        ['Без названия', Number(fs.missing_title || 0)],
-        ['Архив', Number(fs.archived || 0)],
+        ['\u0421\u043e\u0431\u0440\u0430\u043d\u043e', rawCollected],
+        ['\u0423\u043d\u0438\u043a\u0430\u043b\u044c\u043d\u044b\u0445', Number(fs.unique_from_search || 0)],
+        ['\u0414\u0443\u0431\u043b\u0438', Number(fs.duplicates || 0)],
+        ['\u041f\u0435\u0440\u0435\u0434 \u0444\u0438\u043b\u044c\u0442\u0440\u0430\u043c\u0438', candidateCount],
+        ['\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e', Number(fs.title_recovered || 0)],
+        ['\u0411\u0435\u0437 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u044f', Number(fs.missing_title || 0)],
+        ['\u0410\u0440\u0445\u0438\u0432', Number(fs.archived || 0)],
         ['\u041d\u0435 \u0446\u0435\u043b\u0435\u0432\u0430\u044f \u0440\u043e\u043b\u044c', Number(fs.title_no_include || 0)],
         ['\u0423\u0440\u043e\u0432\u0435\u043d\u044c/\u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435', Number(fs.title_excluded || 0)],
         ['\u0414\u0443\u0431\u043b\u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438/\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u0438', Number(fs.same_posting_duplicates || 0)],
         ['\u0414\u0443\u0431\u043b\u0438 \u043f\u0440\u043e\u0448\u043b\u044b\u0445 \u043e\u0442\u043a\u043b\u0438\u043a\u043e\u0432', Number(fs.historical_posting_duplicates || 0)],
-        ['Уже откликались', Number(fs.already_applied || 0)],
-        ['Отказ HH', Number(fs.discarded || 0)],
-        ['Тесты', Number(fs.tests || 0)],
-        ['Безопасность', Number(fs.unsafe || 0)],
-        ['Формат', Number(fs.schedule || 0)],
-        ['Зарплата', Number(fs.salary || 0)],
-        ['Автоответ', Number(fs.auto_response || 0)],
-        ['Аккредит. IT', Number(fs.accredited || 0)],
-        ['Рейтинг', Number(fs.employer_rating || 0)],
+        ['\u0423\u0436\u0435 \u043e\u0442\u043a\u043b\u0438\u043a\u0430\u043b\u0438\u0441\u044c', Number(fs.already_applied || 0)],
+        ['\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e ledger', Number(fs.ledger_blocked || 0)],
+        ['\u0410\u043d\u043a\u0435\u0442\u044b \u043d\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0435', Number(fs.questionnaire_pending || 0)],
+        ['\u041e\u0442\u043a\u0430\u0437 HH', Number(fs.discarded || 0)],
+        ['\u0422\u0435\u0441\u0442\u044b', Number(fs.tests || 0)],
+        ['\u0411\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u044c', Number(fs.unsafe || 0)],
+        ['\u0424\u043e\u0440\u043c\u0430\u0442', Number(fs.schedule || 0)],
+        ['\u0417\u0430\u0440\u043f\u043b\u0430\u0442\u0430', Number(fs.salary || 0)],
+        ['\u0410\u0432\u0442\u043e\u043e\u0442\u0432\u0435\u0442', Number(fs.auto_response || 0)],
+        ['\u0410\u043a\u043a\u0440\u0435\u0434\u0438\u0442. IT', Number(fs.accredited || 0)],
+        ['\u0420\u0435\u0439\u0442\u0438\u043d\u0433', Number(fs.employer_rating || 0)],
         ['Degraded', Number(fs.degraded || 0)],
-        ['Чёрный список', Number(fs.blacklisted || 0)],
+        ['\u0427\u0451\u0440\u043d\u044b\u0439 \u0441\u043f\u0438\u0441\u043e\u043a', Number(fs.blacklisted || 0)],
         ['Related +', Number(fs.related_added || 0)],
-        ['Избранное +', Number(fs.favorited_added || 0)],
-        ['Разрешающих слов', Array.isArray(State.lastSnapshot?.config?.title_include_keywords) ? State.lastSnapshot.config.title_include_keywords.length : 0],
-        ['Исключающих слов', Array.isArray(State.lastSnapshot?.config?.title_exclude_keywords) ? State.lastSnapshot.config.title_exclude_keywords.length : 0],
-        ['Подходит', acceptedCount],
+        ['\u0418\u0437\u0431\u0440\u0430\u043d\u043d\u043e\u0435 +', Number(fs.favorited_added || 0)],
+        ['\u0420\u0430\u0437\u0440\u0435\u0448\u0430\u044e\u0449\u0438\u0445 \u0441\u043b\u043e\u0432', Array.isArray(State.lastSnapshot?.config?.title_include_keywords) ? State.lastSnapshot.config.title_include_keywords.length : 0],
+        ['\u0418\u0441\u043a\u043b\u044e\u0447\u0430\u044e\u0449\u0438\u0445 \u0441\u043b\u043e\u0432', Array.isArray(State.lastSnapshot?.config?.title_exclude_keywords) ? State.lastSnapshot.config.title_exclude_keywords.length : 0],
+        ['\u041f\u043e\u0441\u043b\u0435 \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0445 \u0444\u0438\u043b\u044c\u0442\u0440\u043e\u0432', acceptedCount],
       ];
       fsBody.innerHTML = rows.map(([label, value]) =>
         `<span><b style="color:var(--text)">${esc(label)}:</b> ${value}</span>`
@@ -4103,18 +4108,67 @@ function updateCard(card, acc) {
 
   if (spWrap) {
     spWrap.style.display = (searchOnly && preview.length) ? '' : 'none';
-    if (spCount) spCount.textContent = preview.length;
+    if (spCount) spCount.textContent = queueCount;
     if (spApplyBtn) {
       spApplyBtn.style.display = canApplyPreview ? '' : 'none';
       spApplyBtn.disabled = !canApplyPreview;
-      spApplyBtn.textContent = `✅ Откликнуться на найденные (${preview.length})`;
+      spApplyBtn.textContent = `\u2705 \u041e\u0442\u043a\u043b\u0438\u043a\u043d\u0443\u0442\u044c\u0441\u044f \u043d\u0430 \u0441\u043f\u0438\u0441\u043e\u043a (${queueCount})`;
     }
     if (spBody && searchOnly && preview.length) {
       spBody.innerHTML = preview.map((v, n) => {
         const salary = (v.salary_from || v.salary_to)
-          ? ` · ${esc(v.salary_from || '?')}-${esc(v.salary_to || '?')}` : '';
-        return `<div style="padding:4px 0;border-bottom:1px solid var(--border)">${n+1}. <a href="${esc(v.url || '#')}" target="_blank" rel="noopener" style="color:var(--cyan)">${esc(v.title || ('ID ' + v.id))}</a>${v.company ? ` · ${esc(v.company)}` : ''}${salary}</div>`;
+          ? ` \u00b7 ${esc(v.salary_from || '?')}-${esc(v.salary_to || '?')}` : '';
+        return `<div style="padding:4px 0;border-bottom:1px solid var(--border)">${n+1}. <a href="${esc(v.url || '#')}" target="_blank" rel="noopener" style="color:var(--cyan)">${esc(v.title || ('ID ' + v.id))}</a>${v.company ? ` \u00b7 ${esc(v.company)}` : ''}${salary}</div>`;
       }).join('');
+    }
+  }
+
+  const applySummaryEl = document.getElementById('acc-search-apply-summary-' + acc.idx);
+  const applySummary = (acc.search_apply_summary && typeof acc.search_apply_summary === 'object') ? acc.search_apply_summary : {};
+  const applyResults = Array.isArray(acc.search_apply_results) ? acc.search_apply_results : [];
+  const summaryTotal = Number(applySummary.total || 0);
+  if (applySummaryEl) {
+    if (!summaryTotal) {
+      applySummaryEl.style.display = 'none';
+      applySummaryEl.innerHTML = '';
+    } else {
+      applySummaryEl.style.display = '';
+      const processed = Number(applySummary.processed || 0);
+      const remaining = Number(applySummary.remaining || 0);
+      const activeText = applySummary.active ? '\u23f3 \u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430 \u0441\u043f\u0438\u0441\u043a\u0430' : '\u2705 \u0418\u0442\u043e\u0433 \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0435\u0433\u043e \u0441\u043f\u0438\u0441\u043a\u0430';
+      const chips = [
+        ['\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e', Number(applySummary.sent || 0), 'var(--green)'],
+        ['\u0423\u0436\u0435 \u0431\u044b\u043b\u043e', Number(applySummary.already || 0), 'var(--blue)'],
+        ['\u0410\u043d\u043a\u0435\u0442\u0430 review', Number(applySummary.questionnaire_review || 0), 'var(--yellow)'],
+        ['Safety', Number(applySummary.safety || 0), 'var(--yellow)'],
+        ['\u0422\u0435\u0441\u0442/\u0430\u043d\u043a\u0435\u0442\u0430', Number(applySummary.tests || 0), 'var(--magenta)'],
+        ['\u041e\u0448\u0438\u0431\u043a\u0438', Number(applySummary.errors || 0), 'var(--red)'],
+        ['\u041b\u0438\u043c\u0438\u0442', Number(applySummary.limit || 0), 'var(--red)'],
+      ];
+      const chipHtml = chips.map(([label, value, color]) =>
+        `<span style="white-space:nowrap"><b style="color:${color}">${esc(label)}:</b> ${value}</span>`
+      ).join(' &nbsp; ');
+      const outcomeLabel = {
+        sent: '\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e',
+        already: '\u0423\u0436\u0435 \u0431\u044b\u043b \u043e\u0442\u043a\u043b\u0438\u043a',
+        questionnaire_review: '\u0410\u043d\u043a\u0435\u0442\u0430 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 review',
+        safety: 'Safety-\u043f\u0440\u043e\u043f\u0443\u0441\u043a', tests: '\u0422\u0435\u0441\u0442/\u0430\u043d\u043a\u0435\u0442\u0430',
+        errors: '\u041e\u0448\u0438\u0431\u043a\u0430', limit: '\u041b\u0438\u043c\u0438\u0442', deferred: '\u041e\u0442\u043b\u043e\u0436\u0435\u043d\u043e',
+      };
+      const problemRows = applyResults.filter(r => r.outcome !== 'sent').map((r) => {
+        const name = esc(r.title || ('ID ' + (r.id || '')));
+        const company = r.company ? ` \u00b7 ${esc(r.company)}` : '';
+        const reason = r.reason ? `: ${esc(r.reason)}` : '';
+        return `<div style="padding:3px 0;border-top:1px solid var(--border)"><b>${esc(outcomeLabel[r.outcome] || r.outcome || '?')}</b> \u2014 ${name}${company}${reason}</div>`;
+      }).join('');
+      const details = problemRows
+        ? `<details style="margin-top:5px"><summary style="cursor:pointer;color:var(--cyan)">\u041f\u043e\u0447\u0435\u043c\u0443 \u043d\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b\u0438\u0441\u044c (${applyResults.filter(r => r.outcome !== 'sent').length})</summary><div style="margin-top:4px">${problemRows}</div></details>`
+        : '';
+      applySummaryEl.innerHTML =
+        `<div style="margin-bottom:4px"><b style="color:var(--cyan)">${activeText}:</b> ${processed}/${summaryTotal}</div>` +
+        `<div style="line-height:1.7">${chipHtml}</div>` +
+        (remaining ? `<div style="margin-top:3px;color:var(--dim)">\u0415\u0449\u0451 \u043d\u0435 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u043e: ${remaining}</div>` : '') +
+        details;
     }
   }
 
@@ -5461,7 +5515,7 @@ function applyFoundSearchResults(idx, btn) {
   const accounts = Array.isArray(State.lastSnapshot?.accounts) ? State.lastSnapshot.accounts : [];
   const acc = accounts.find(a => Number(a.idx) === Number(idx));
   const preview = Array.isArray(acc?.search_preview) ? acc.search_preview : [];
-  const count = preview.length;
+  const count = Math.max(0, Number(acc?.total_vacancies || preview.length || 0));
   if (!count) return;
   const ok = confirm(`Откликнуться именно на текущие ${count} вакансий? Повторного поиска не будет. Дневной лимит, лимит запуска и все safety-проверки останутся включены.`);
   if (!ok) return;

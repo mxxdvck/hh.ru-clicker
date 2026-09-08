@@ -621,6 +621,9 @@ def test_apply_search_results_accepts_only_existing_subset(monkeypatch):
     assert state.total_vacancies == 2
     assert state._apply_search_results_ids == ["103", "101"]
     assert state._apply_search_results_requested is True
+    assert state.search_apply_summary["active"] is True
+    assert state.search_apply_summary["total"] == 2
+    assert state.search_apply_summary["processed"] == 0
 
 
 def test_apply_search_results_rejects_unknown_subset_without_unpausing(monkeypatch):
@@ -667,3 +670,56 @@ def test_application_ledger_status_counts(monkeypatch):
         "failed_permanent": 1,
     }
     assert ledger.get_status_counts("another") == {}
+
+
+def test_application_ledger_blocking_ids_include_hh_already_and_review(monkeypatch):
+    _enable_test_sends(monkeypatch)
+
+    for vid, status in (
+        ("1", "applied"),
+        ("2", "already"),
+        ("3", "needs_questionnaire"),
+        ("4", "failed_permanent"),
+        ("5", "interrupted"),
+        ("6", "released"),
+    ):
+        ok, *_ = ledger.reserve_application("ops", vid, "resume", "test", "run")
+        assert ok
+        ledger.mark_application("ops", vid, "resume", status=status)
+
+    assert ledger.get_blocking_vacancy_ids("ops", "resume") == {
+        "1": "applied",
+        "2": "already",
+        "3": "needs_questionnaire",
+        "4": "failed_permanent",
+        "5": "interrupted",
+    }
+    assert ledger.get_blocking_vacancy_ids("ops", "other-resume") == {}
+
+
+def test_search_apply_summary_tracks_unique_outcomes_and_remaining():
+    import app.manager as manager_mod
+    from app.state import AccountState
+
+    state = AccountState({"name": "acc", "short": "a", "color": "#fff", "urls": []})
+    state.vacancy_meta = {
+        "101": {"title": "One", "company": "A"},
+        "102": {"title": "Two", "company": "B"},
+    }
+    mgr = manager_mod.BotManager.__new__(manager_mod.BotManager)
+
+    mgr._begin_search_apply_summary(state, 3)
+    mgr._record_search_apply_outcome(state, "101", "sent", "ok")
+    mgr._record_search_apply_outcome(state, "101", "errors", "must not double count")
+    mgr._record_search_apply_outcome(state, "102", "questionnaire_review", "needs review")
+    mgr._finish_search_apply_summary(state, "stopped")
+
+    assert state.search_apply_summary["active"] is False
+    assert state.search_apply_summary["total"] == 3
+    assert state.search_apply_summary["processed"] == 2
+    assert state.search_apply_summary["sent"] == 1
+    assert state.search_apply_summary["questionnaire_review"] == 1
+    assert state.search_apply_summary["errors"] == 0
+    assert state.search_apply_summary["remaining"] == 1
+    assert state.search_apply_summary["finish_reason"] == "stopped"
+    assert [row["id"] for row in state.search_apply_results] == ["101", "102"]

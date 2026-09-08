@@ -59,6 +59,11 @@ class AccountState:
         # None means the whole current safe-search queue. A list is an explicit
         # user-approved subset, validated server-side against vacancies_queue.
         self._apply_search_results_ids = None
+        # Last explicitly approved safe-search batch. Kept after the queue is
+        # cleared so the dashboard can explain where every candidate went.
+        self.search_apply_summary: dict = {}
+        self.search_apply_results: list[dict] = []
+        self._search_apply_result_ids: set[str] = set()
 
         self.limit_exceeded = False
         self.limit_reset_time = None

@@ -231,7 +231,37 @@ def test_search_only_paused_account_shows_found_vacancy_preview(ui):
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("\u0423\u0440\u043e\u0432\u0435\u043d\u044c/\u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435: 18")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Уже откликались: 6")
     expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Отказ HH: 4")
-    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("Подходит: 6")
+    expect(ui.page.locator("#acc-search-filter-0")).to_contain_text("\u041f\u043e\u0441\u043b\u0435 \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0445 \u0444\u0438\u043b\u044c\u0442\u0440\u043e\u0432: 6")
+
+
+
+def test_search_apply_summary_explains_why_vacancies_were_not_sent(ui):
+    acc = _account(
+        idx=0,
+        search_apply_summary={
+            "active": False, "total": 4, "processed": 4, "remaining": 0,
+            "sent": 1, "already": 1, "questionnaire_review": 1,
+            "safety": 1, "tests": 0, "errors": 0, "limit": 0,
+        },
+        search_apply_results=[
+            {"id": "101", "title": "One", "company": "A", "outcome": "sent", "reason": ""},
+            {"id": "102", "title": "Two", "company": "B", "outcome": "already", "reason": "already"},
+            {"id": "103", "title": "Three", "company": "C", "outcome": "questionnaire_review", "reason": "needs review"},
+            {"id": "104", "title": "Four", "company": "D", "outcome": "safety", "reason": "preflight"},
+        ],
+    )
+    _install_state(ui, _state(accounts=[acc]))
+    ui.open()
+    ui.push_state()
+
+    summary = ui.page.locator("#acc-search-apply-summary-0")
+    expect(summary).to_be_visible()
+    expect(summary).to_contain_text("4/4")
+    expect(summary).to_contain_text("\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e: 1")
+    expect(summary).to_contain_text("\u0423\u0436\u0435 \u0431\u044b\u043b\u043e: 1")
+    expect(summary).to_contain_text("Two")
+    expect(summary).to_contain_text("Three")
+    expect(summary).to_contain_text("Four")
 
 
 def test_search_only_preview_apply_button_sends_queue_command(ui):
